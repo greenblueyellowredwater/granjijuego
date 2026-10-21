@@ -34,6 +34,7 @@ import {
 import { addItem, consumeOne } from "../world/items.ts";
 import { afterHarvest, cropDrawMath, harvestQuality, isHarvestable, isInSeason, newCrop, type CropData } from "../world/crops.ts";
 import { dayUpdateLocations } from "../world/day.ts";
+import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canTill, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
 import { daySaveRandom, type GsqState } from "../world/gsq.ts";
@@ -105,6 +106,7 @@ export interface WorldStart {
 }
 
 export interface WorldText extends HudStrings {
+  greenhouseBroken: string;
   wrongSeason: string;
   inventoryFull: string;
   sleepQuestion: string;
@@ -128,6 +130,7 @@ export interface WorldData {
   greenRainDays: number[];
   items: ItemData;
   crops: Record<string, CropData>;
+  buildings: Record<string, BuildingData>;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
 }
@@ -253,6 +256,11 @@ export class World extends Phaser.Scene {
       "LooseSprites/Cursors",
       "LooseSprites/Cursors_1_6",
       "LooseSprites/Giftbox",
+      "Buildings/houses",
+      "Buildings/Greenhouse",
+      "Buildings/Shipping Bin",
+      "Buildings/Pet Bowl",
+      "Buildings/Mailbox",
       "Maps/springobjects",
       "TileSheets/bushes",
       "TerrainFeatures/grass",
@@ -290,6 +298,10 @@ export class World extends Phaser.Scene {
       entities.push({ kind: "bed", ...STARTER_BED });
       changed = true;
     }
+    if (this.location.name === "Farm" && !entities.some((e) => e.kind === "building")) {
+      entities.push(...defaultFarmBuildings(this.location.props));
+      changed = true;
+    }
     if (this.location.name === FARMHOUSE && !state.flags.includes(STARTER_GIFT_FLAG)) {
       const pos = starterGiftPosition(this.location.props);
       entities.push({ kind: "giftbox", x: pos.x, y: pos.y, items: starterGiftItems(this.location.props), index: 0 });
@@ -299,7 +311,7 @@ export class World extends Phaser.Scene {
     if (changed) store.save(state);
     this.entities = entities;
     this.bed = (entities.find((e) => e.kind === "bed") as Extract<Entity, { kind: "bed" }> | undefined) ?? null;
-    this.location.setSolids(entities.flatMap((e) => solidRects(e, this.params.terrain)));
+    this.location.setSolids(entities.flatMap((e) => this.solidsOf(e)));
     const grass: GrassContext = {
       uniqueId: state.uniqueId,
       daysPlayed: state.daysPlayed,
@@ -307,13 +319,59 @@ export class World extends Phaser.Scene {
       hasFrontTile: (x, y) => this.location.tile("Front", x, y) !== 0,
     };
     for (const e of entities) {
-      const images = drawOps(e, this.params.terrain, this.params.season, grass)
+      const ops = e.kind === "building" ? this.buildingOps(e) : drawOps(e, this.params.terrain, this.params.season, grass);
+      const images = ops
         .map((op) => ({ op, image: this.addDrawOp(op) }))
         .filter((x) => x.op.fades && x.image)
         .map((x) => x.image!);
       const rect = e.kind === "tree" ? treeFadeRect(e) : null;
       if (rect && images.length) this.fadingTrees.push({ rect, alpha: 1, images });
     }
+  }
+
+  private buildingOps(e: BuildingEntity) {
+    const data = this.params.buildings[e.type];
+    if (!data) return [];
+    const texture = data.Texture.replace(/\\/g, "/");
+    const size = this.params.manifest.textures[texture] ?? { width: 0, height: 0 };
+    return buildingDrawOps(e, data, size, { houseLevel: 0, greenhouseUnlocked: this.params.state.flags.includes("ccPantry") });
+  }
+
+  private solidsOf(e: Entity) {
+    if (e.kind === "building") {
+      const data = this.params.buildings[e.type];
+      return data ? buildingSolids(e, data) : [];
+    }
+    return solidRects(e, this.params.terrain);
+  }
+
+  private tryShip(tx?: number, ty?: number) {
+    const state = this.params.state;
+    const item = state.inventory[state.currentToolIndex];
+    if (!item || parseId(item.id).type !== "O") return false;
+    const data = this.params.items.objects[parseId(item.id).id];
+    if (!data || (data.Price ?? 0) <= 0) return false;
+    const c = centerTile(this.body);
+    const bin = this.entities.find((e): e is BuildingEntity => e.kind === "building" && e.type === "Shipping Bin" && nearShippingBin(e, c.x, c.y));
+    if (!bin) return false;
+    if (tx !== undefined && ty !== undefined && !(ty === bin.y && tx >= bin.x && tx <= bin.x + 1)) return false;
+    state.shipping.push(item);
+    state.inventory[state.currentToolIndex] = null;
+    return true;
+  }
+
+  private tryBuildingDoor(tx: number, ty: number) {
+    for (const e of this.entities) {
+      if (e.kind !== "building") continue;
+      const data = this.params.buildings[e.type];
+      const door = data && buildingDoor(e, data);
+      if (!door || door.x !== tx || door.y !== ty) continue;
+      if (e.type === "Farmhouse") this.warpTo(FARMHOUSE, 3, 11);
+      else if (e.type === "Greenhouse" && !this.params.state.flags.includes("ccPantry")) this.message = this.params.text.greenhouseBroken;
+      else if (data.IndoorMap) this.warpTo(data.IndoorMap, door.x, door.y);
+      return true;
+    }
+    return false;
   }
 
   private dirtAt(x: number, y: number) {
@@ -411,7 +469,7 @@ export class World extends Phaser.Scene {
       return true;
     }
     this.entities.splice(this.entities.indexOf(box), 1);
-    this.location.setSolids(this.entities.flatMap((e) => solidRects(e, this.params.terrain)));
+    this.location.setSolids(this.entities.flatMap((e) => this.solidsOf(e)));
     this.scene.restart({ ...this.params, start: { location: this.location.name, x: centerTile(this.body).x, y: centerTile(this.body).y, facing: this.body.facing } });
     return true;
   }
@@ -438,6 +496,7 @@ export class World extends Phaser.Scene {
 
   private useToolButton(target?: { x: number; y: number }) {
     if (this.tool || this.question?.open || this.endingDay || this.warping) return;
+    if (target && this.tryShip(Math.floor(target.x / TILE), Math.floor(target.y / TILE))) return;
     if (this.tryPlant(target)) return;
     const t = this.currentTool();
     if (!t) return;
@@ -716,6 +775,8 @@ export class World extends Phaser.Scene {
     }
     const t = facingTile(this.body);
     if (this.tryOpenGiftbox(t.x, t.y)) return;
+    if (this.tryShip(t.x, t.y)) return;
+    if (this.tryBuildingDoor(t.x, t.y)) return;
     if (this.tryHarvest(t.x, t.y)) return;
     const c = centerTile(this.body);
     if (this.tryHarvest(c.x, c.y)) return;
@@ -776,6 +837,11 @@ export class World extends Phaser.Scene {
     const { state, store, clock } = this.params;
     this.cameras.main.fadeOut(1000, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      for (const item of state.shipping) {
+        const data = this.params.items.objects[parseId(item.id).id];
+        state.money += sellPrice(data?.Price ?? 0, item.quality ?? 0) * item.stack;
+      }
+      state.shipping = [];
       Object.assign(state, nextDay(state));
       const gsq = this.gsqState();
       const random = daySaveRandom(gsq);
@@ -837,12 +903,15 @@ export class World extends Phaser.Scene {
           wedding: state.weather === "Wedding",
         }),
         money: state.money,
+        stamina: state.stamina,
+        maxStamina: state.maxStamina,
         shaking: clock.shakeMs > 0,
         timePasses: this.timePasses,
         totalMs: time,
         random: (min, max) => min + Math.floor(Math.random() * (max - min)),
       },
       this.cameras.main.width,
+      this.cameras.main.height,
     );
   }
 

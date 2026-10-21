@@ -8,6 +8,7 @@ import { GameClock } from "./world/clock.ts";
 import type { WeatherData } from "./world/weather.ts";
 import type { ItemData } from "./world/items.ts";
 import type { CropData } from "./world/crops.ts";
+import type { BuildingData } from "./world/buildings.ts";
 import type { ClothingData } from "./world/farmer-appearance.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -68,7 +69,7 @@ async function boot() {
   }
 
   const load = async (key: string) => (await fetch(contentUrl(key, "json"))).json();
-  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon, contexts, festivalDates, passiveFestivals, calendar, tools, weapons, crops] = (await Promise.all([
+  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon, contexts, festivalDates, passiveFestivals, calendar, tools, weapons, crops, buildings, buildingStrings] = (await Promise.all([
     load("Data/Locations"),
     load("Data/WildTrees"),
     load("Data/Objects"),
@@ -85,6 +86,8 @@ async function boot() {
     load("Data/Tools"),
     load("Data/Weapons"),
     load("Data/Crops"),
+    load("Data/Buildings"),
+    load("Strings/Buildings"),
   ])) as [
     LocationsData,
     TerrainData["wildTrees"],
@@ -102,6 +105,8 @@ async function boot() {
     ItemData["tools"],
     ItemData["weapons"],
     Record<string, CropData>,
+    Record<string, BuildingData>,
+    Record<string, string>,
   ];
   const terrain: TerrainData = {
     wildTrees,
@@ -117,6 +122,7 @@ async function boot() {
     late: csStrings["Game1.cs.2652"] ?? "",
     sleepQuestion: locationStrings["FarmHouse_Bed_GoToSleep"] ?? "",
     wrongSeason: csStrings["HoeDirt.cs.13924"] ?? "",
+    greenhouseBroken: locationStrings["Farm_GreenhouseRuins"] ?? "",
     inventoryFull: csStrings["Crop.cs.588"] ?? "",
     yes: lexicon["QuestionDialogue_Yes"] ?? "Yes",
     no: lexicon["QuestionDialogue_No"] ?? "No",
@@ -147,6 +153,7 @@ async function boot() {
     weather: { conditions: contexts.Default?.WeatherConditions ?? [], festivalDates, passiveFestivals },
     greenRainDays: calendar.greenRainDays ?? [],
     crops,
+    buildings,
     items: {
       tools,
       weapons,

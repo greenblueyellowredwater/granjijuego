@@ -21,6 +21,7 @@ export interface GameState {
   maxStamina: number;
   waterLeft: number;
   flags: string[];
+  shipping: Item[];
   appearance?: Appearance;
   locations: Record<string, { entities: Entity[] }>;
 }
@@ -42,6 +43,7 @@ export function newGameState(random = Math.random): GameState {
     maxStamina: 270,
     waterLeft: 40,
     flags: [],
+    shipping: [],
     appearance: DEFAULT_APPEARANCE,
     locations: {},
   };
@@ -61,6 +63,7 @@ export function withDefaults(state: GameState): GameState {
     maxStamina: state.maxStamina ?? 270,
     waterLeft: state.waterLeft ?? 40,
     flags: state.flags ?? [],
+    shipping: state.shipping ?? [],
   };
 }
 

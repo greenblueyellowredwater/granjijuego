@@ -36,7 +36,8 @@ export type Entity =
   | { kind: "grass"; x: number; y: number; grassType: number }
   | { kind: "bed"; x: number; y: number; itemId: string }
   | { kind: "hoeDirt"; x: number; y: number; watered: boolean; crop?: CropState | null }
-  | { kind: "giftbox"; x: number; y: number; items: { id: string; stack: number }[]; index: number };
+  | { kind: "giftbox"; x: number; y: number; items: { id: string; stack: number }[]; index: number }
+  | { kind: "building"; type: string; x: number; y: number };
 
 export interface DrawOp {
   texture: string;

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { SpriteFont } from "./spritefont.ts";
 import { clockHandRotation, formatTime } from "../world/clock.ts";
-import { dateText, moneyDigits } from "./hud-layout.ts";
+import { dateText, energyBarLayout, moneyDigits } from "./hud-layout.ts";
 
 export const HUD_DEPTH = 100;
 const CURSORS = "LooseSprites/Cursors";
@@ -26,6 +26,8 @@ export interface HudState {
   seasonIndex: number;
   weatherIcon: number;
   money: number;
+  stamina: number;
+  maxStamina: number;
   shaking: boolean;
   timePasses: boolean;
   totalMs: number;
@@ -86,8 +88,22 @@ export class Hud {
     return this.font.measure(text);
   }
 
-  draw(s: HudState, uiWidth: number) {
+  private energy(s: HudState, uiWidth: number, uiHeight: number) {
+    const l = energyBarLayout(s.stamina, s.maxStamina, uiWidth, uiHeight);
+    this.sprite(CURSORS, [256, 408, 12, 16], l.top.x, l.top.y);
+    this.sprite(CURSORS, [256, 424, 12, 16], l.middle.x, l.middle.y)?.setScale(l.middle.w / 12, l.middle.h / 16);
+    this.sprite(CURSORS, [256, 448, 12, 16], l.bottom.x, l.bottom.y);
+    if (l.fill.h <= 0) return;
+    const [r, g, b] = l.color;
+    const fill = this.image("__WHITE", 0, 0, 1, 1);
+    fill.setPosition(l.fill.x, l.fill.y).setScale(l.fill.w, l.fill.h).setTint((r << 16) | (g << 8) | b);
+    const dark = this.image("__WHITE", 0, 0, 1, 1);
+    dark.setPosition(l.fill.x, l.fill.y).setScale(l.fill.w, Math.min(4, l.fill.h)).setTint((Math.max(0, r - 50) << 16) | (Math.max(0, g - 50) << 8) | b);
+  }
+
+  draw(s: HudState, uiWidth: number, uiHeight = 0) {
     this.used = 0;
+    if (uiHeight > 0) this.energy(s, uiWidth, uiHeight);
     const px = uiWidth - 300, py = 8;
     this.sprite(CURSORS, [333, 431, 71, 43], px, py);
 

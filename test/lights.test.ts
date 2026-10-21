@@ -146,3 +146,16 @@ describe("cama", () => {
     expect(wakeUpPosition(bed, () => false)).toEqual({ x: 640, y: 608, facing: "left" });
   });
 });
+
+describe("barra de energía", () => {
+  it("ubica la barra y colorea de rojo a verde como el original", async () => {
+    const { energyBarLayout, redToGreen } = await import("../src/render/hud-layout.ts");
+    expect(redToGreen(1)).toEqual([0, 255, 0]);
+    expect(redToGreen(0.5)).toEqual([255, 255, 0]);
+    expect(redToGreen(0.25)).toEqual([255, 127, 0]);
+    const l = energyBarLayout(270, 270, 1280, 800);
+    expect(l.top).toEqual({ x: 1224, y: 560 });
+    expect(l.bottom).toEqual({ x: 1224, y: 720 });
+    expect(l.fill).toEqual({ x: 1236, y: 608, w: 24, h: 167 });
+  });
+});
