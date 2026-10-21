@@ -30,7 +30,7 @@ describe("inventario", () => {
   it("resuelve sprites de menú", () => {
     expect(itemSprite({ id: "(T)Hoe", stack: 1 }, data)).toEqual({ texture: "TileSheets/tools", sx: 47 * 16 % 336, sy: Math.floor((47 * 16) / 336) * 16, sw: 16, sh: 16 });
     expect(itemSprite({ id: "(W)47", stack: 1 }, data)).toEqual({ texture: "TileSheets/weapons", sx: 112, sy: 80, sw: 16, sh: 16 });
-    expect(itemSprite({ id: "(O)472", stack: 1 }, data)).toEqual({ texture: "Maps/springobjects", sx: 128, sy: 304, sw: 16, sh: 16 });
+    expect(itemSprite({ id: "(O)472", stack: 1 }, data)).toEqual({ texture: "Maps/springobjects", sx: 256, sy: 304, sw: 16, sh: 16 });
   });
 
   it("dibuja dígitos chicos sin ceros a la izquierda", () => {
