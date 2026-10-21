@@ -55,7 +55,13 @@ export class RenderedMap {
   readonly characterDepth: number;
   private readonly animated: AnimatedCell[] = [];
 
-  constructor(scene: Phaser.Scene, mapPath: string, manifest: Manifest, season: Season) {
+  constructor(
+    scene: Phaser.Scene,
+    mapPath: string,
+    manifest: Manifest,
+    season: Season,
+    readonly scale = 1,
+  ) {
     const key = mapCacheKey(mapPath);
     this.data = scene.cache.tilemap.get(key).data as TiledMap;
     this.map = scene.make.tilemap({ key });
@@ -70,7 +76,7 @@ export class RenderedMap {
       if (HIDDEN_LAYERS.has(name)) return;
       const layer = this.map.createLayer(name, tilesets, 0, 0);
       if (!layer) return;
-      layer.setDepth(depth);
+      layer.setDepth(depth).setScale(scale);
       this.layers.push(layer);
       const raw = this.data.layers.find((l) => l.name === name)?.properties?.find((p) => p.name === "animations")?.value;
       for (const [cell, anim] of Object.entries(JSON.parse(typeof raw === "string" ? raw : "{}") as Record<string, Animation>)) {
@@ -82,11 +88,11 @@ export class RenderedMap {
   }
 
   get widthInPixels() {
-    return this.map.widthInPixels;
+    return this.map.widthInPixels * this.scale;
   }
 
   get heightInPixels() {
-    return this.map.heightInPixels;
+    return this.map.heightInPixels * this.scale;
   }
 
   update(time: number) {

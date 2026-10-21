@@ -1,17 +1,30 @@
 import Phaser from "phaser";
 import { contentUrl, type Manifest, type Season } from "../content.ts";
 import { queueTilemap, RenderedMap } from "../render/tilemap.ts";
+import { FarmerAnimator } from "../world/farmer-animation.ts";
 import { Location, TILE } from "../world/location.ts";
-import { centerTile, collides, Facing, facingTile, findOpenTile, step, type Body, type MoveInput } from "../world/movement.ts";
+import {
+  centerTile,
+  collides,
+  Facing,
+  facingTile,
+  farmerBox,
+  findOpenTile,
+  positionForTile,
+  step,
+  TICK_MS,
+  TICKS_PER_SECOND,
+  type Body,
+} from "../world/movement.ts";
 
-const PIXEL_ZOOM = 4;
-const SCALE = TILE / 16;
+const PIXEL_SCALE = TILE / 16;
 const FARMER_TEXTURE = "Characters/Farmer/farmer_base";
+const SHADOW_TEXTURE = "LooseSprites/shadow";
+const FARMER_TABLES = "generated/farmer";
 const SHEET_COLUMNS = 18;
-const ARMS_OFFSET = 6;
-const WALK_CYCLE = [0, 1, 0, 2];
-const FRAME_MS = { run: 90, walk: 150 };
-const ROW_FOR_FACING: Record<Facing, number> = { [Facing.Up]: 2, [Facing.Right]: 1, [Facing.Down]: 0, [Facing.Left]: 1 };
+const ARM_OFFSET_COLUMNS = 6;
+const MAX_TICKS_PER_FRAME = 8;
+const TICK_REAL_MS = 1000 / TICKS_PER_SECOND;
 
 export type LocationsData = Record<string, { CreateOnLoad?: { MapPath?: string | null } | null }>;
 
@@ -45,19 +58,31 @@ export function parseActionWarp(action: string): DoorWarp | null {
   return { target, x: +x, y: +y };
 }
 
+export function sheetFrame(gameFrame: number) {
+  return Math.floor(gameFrame / 6) * SHEET_COLUMNS + (gameFrame % 6);
+}
+
+export function viewportScroll(center: number, viewport: number, mapSize: number) {
+  if (mapSize < viewport) return Math.floor((mapSize - viewport) / 2);
+  return Math.max(0, Math.min(Math.floor(center - viewport / 2), mapSize - viewport));
+}
+
 export class World extends Phaser.Scene {
   private params!: WorldData;
   private mapPath!: string;
   private rendered!: RenderedMap;
   private location!: Location;
   private body!: Body;
-  private bodySprite!: Phaser.GameObjects.Sprite;
-  private armsSprite!: Phaser.GameObjects.Sprite;
+  private animator = new FarmerAnimator();
+  private bodySprite!: Phaser.GameObjects.Image;
+  private armsSprite!: Phaser.GameObjects.Image;
+  private shadow!: Phaser.GameObjects.Image;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
-  private arrivalTile: { x: number; y: number } | null = null;
-  private animTime = 0;
+  private featureYOffset: number[] = [];
+  private accumulator = 0;
   private message = "";
   private warping = false;
+  private running = true;
 
   constructor() {
     super("World");
@@ -68,6 +93,8 @@ export class World extends Phaser.Scene {
     this.mapPath = resolveMapPath(data.locations, data.start.location);
     this.warping = false;
     this.message = "";
+    this.accumulator = 0;
+    this.animator = new FarmerAnimator();
   }
 
   preload() {
@@ -76,6 +103,8 @@ export class World extends Phaser.Scene {
     if (!this.textures.exists(FARMER_TEXTURE)) {
       this.load.spritesheet(FARMER_TEXTURE, contentUrl(FARMER_TEXTURE, "png"), { frameWidth: 16, frameHeight: 32 });
     }
+    if (!this.textures.exists(SHADOW_TEXTURE)) this.load.image(SHADOW_TEXTURE, contentUrl(SHADOW_TEXTURE, "png"));
+    if (!this.cache.json.exists(FARMER_TABLES)) this.load.json(FARMER_TABLES, contentUrl(FARMER_TABLES, "json"));
   }
 
   create() {
@@ -84,22 +113,24 @@ export class World extends Phaser.Scene {
       this.params.onStatus(`No existe el mapa ${this.mapPath} para la location ${start.location}`);
       return;
     }
-    this.rendered = new RenderedMap(this, this.mapPath, this.params.manifest, this.params.season);
+    this.rendered = new RenderedMap(this, this.mapPath, this.params.manifest, this.params.season, PIXEL_SCALE);
     this.location = new Location(start.location, this.rendered.data);
+    this.featureYOffset = this.cache.json.get(FARMER_TABLES)?.featureYOffsetPerFrame ?? [];
 
     const spawn = this.spawnTile(start);
-    this.body = { x: spawn.x * TILE, y: spawn.y * TILE, facing: start.facing ?? Facing.Down };
-    this.arrivalTile = start.x !== undefined ? centerTile(this.body) : null;
+    const pos = positionForTile(spawn.x, spawn.y);
+    this.body = { x: pos.x, y: pos.y, facing: start.facing ?? Facing.Down };
     this.params.onEnter?.(start.location, spawn);
 
-    this.bodySprite = this.add.sprite(0, 0, FARMER_TEXTURE, 0).setOrigin(0, 0).setDepth(this.rendered.characterDepth);
-    this.armsSprite = this.add.sprite(0, 0, FARMER_TEXTURE, ARMS_OFFSET).setOrigin(0, 0).setDepth(this.rendered.characterDepth + 0.01);
-    this.placeSprites(null);
+    const depth = this.rendered.characterDepth;
+    this.shadow = this.add.image(0, 0, SHADOW_TEXTURE).setDepth(depth - 0.02);
+    this.bodySprite = this.add.image(0, 0, FARMER_TEXTURE, 0).setOrigin(0, 0).setScale(PIXEL_SCALE).setDepth(depth);
+    this.armsSprite = this.add.image(0, 0, FARMER_TEXTURE, ARM_OFFSET_COLUMNS).setOrigin(0, 0).setScale(PIXEL_SCALE).setDepth(depth + 0.01);
 
     const cam = this.cameras.main;
-    cam.setZoom(PIXEL_ZOOM).setBackgroundColor("#000").setRoundPixels(true);
-    cam.setBounds(0, 0, this.rendered.widthInPixels, this.rendered.heightInPixels);
-    cam.startFollow(this.bodySprite, true, 1, 1, -8, -24);
+    cam.setZoom(1).setBackgroundColor("#000").setRoundPixels(true);
+    this.placeSprites();
+    this.updateCamera();
 
     const kb = this.input.keyboard!;
     this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,X,E") as Record<string, Phaser.Input.Keyboard.Key>;
@@ -107,20 +138,25 @@ export class World extends Phaser.Scene {
     kb.on("keydown-E", () => this.interact());
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => p.rightButtonDown() && this.interact());
+    cam.fadeIn(150, 0, 0, 0);
   }
 
   private spawnTile(start: WorldStart) {
     const fx = start.x ?? Math.floor(this.location.width / 2);
     const fy = start.y ?? Math.floor(this.location.height / 2);
-    if (start.x !== undefined && start.y !== undefined && !collides(this.location, fx * TILE, fy * TILE)) return { x: fx, y: fy };
+    const p = positionForTile(fx, fy);
+    if (start.x !== undefined && start.y !== undefined && !collides(this.location, p.x, p.y)) return { x: fx, y: fy };
     return findOpenTile(this.location, fx, fy) ?? { x: fx, y: fy };
   }
 
-  private readInput(): MoveInput {
+  private pressed() {
     const k = this.keys;
-    const dx = ((k.RIGHT.isDown || k.D.isDown ? 1 : 0) - (k.LEFT.isDown || k.A.isDown ? 1 : 0)) as MoveInput["dx"];
-    const dy = ((k.DOWN.isDown || k.S.isDown ? 1 : 0) - (k.UP.isDown || k.W.isDown ? 1 : 0)) as MoveInput["dy"];
-    return { dx, dy, running: !k.SHIFT.isDown };
+    const set = new Set<Facing>();
+    if (k.UP.isDown || k.W.isDown) set.add(Facing.Up);
+    if (k.DOWN.isDown || k.S.isDown) set.add(Facing.Down);
+    if (k.RIGHT.isDown || k.D.isDown) set.add(Facing.Right);
+    if (k.LEFT.isDown || k.A.isDown) set.add(Facing.Left);
+    return set;
   }
 
   private interact() {
@@ -148,36 +184,54 @@ export class World extends Phaser.Scene {
     });
   }
 
-  private placeSprites(frameMs: number | null) {
-    const col = frameMs ? WALK_CYCLE[Math.floor(this.animTime / frameMs) % WALK_CYCLE.length] : 0;
-    const frame = ROW_FOR_FACING[this.body.facing] * SHEET_COLUMNS + col;
-    const px = this.body.x / SCALE, py = this.body.y / SCALE - 16;
-    const flip = this.body.facing === Facing.Left;
-    this.bodySprite.setFrame(frame).setPosition(px, py).setFlipX(flip);
-    this.armsSprite.setFrame(frame + ARMS_OFFSET).setPosition(px, py).setFlipX(flip);
+  private simulate() {
+    const pressed = this.pressed();
+    this.running = !this.keys.SHIFT.isDown;
+    const result = step(this.location, this.body, pressed, this.running, TICK_MS);
+    this.animator.tick(this.body.facing, pressed.size > 0, this.running, pressed.size, TICK_MS);
+    if (result.warp) this.warpTo(result.warp.target, result.warp.toX, result.warp.toY);
+  }
+
+  private placeSprites() {
+    const f = this.animator.frame;
+    const x = Math.floor(this.body.x);
+    const y = Math.floor(this.body.y) - 96 + f.offsetY * PIXEL_SCALE;
+    const frame = sheetFrame(f.frame);
+    this.bodySprite.setFrame(frame).setPosition(x, y).setFlipX(f.flip);
+    this.armsSprite.setFrame(frame + ARM_OFFSET_COLUMNS).setPosition(x, y).setFlipX(f.flip);
+    const shrink = this.running && this.animator.animationIndexInLoop > 1 ? Math.abs(this.featureYOffset[f.frame] ?? 0) * 0.5 : 0;
+    this.shadow.setPosition(this.body.x + 32, this.body.y + 24).setScale(PIXEL_SCALE - shrink);
+  }
+
+  private updateCamera() {
+    const cam = this.cameras.main;
+    const box = farmerBox(this.body.x, this.body.y);
+    cam.scrollX = viewportScroll(box.x + box.w / 2, cam.width, this.rendered.widthInPixels);
+    cam.scrollY = viewportScroll(box.y + box.h / 2, cam.height, this.rendered.heightInPixels);
   }
 
   update(time: number, delta: number) {
     if (!this.location || !this.body) return;
     this.rendered.update(time);
-    if (this.warping) return;
-
-    const input = this.readInput();
-    const moved = step(this.location, this.body, input, Math.min(delta, 50));
-    if (moved) this.animTime += delta;
-    else this.animTime = 0;
-    this.placeSprites(moved ? (input.running ? FRAME_MS.run : FRAME_MS.walk) : null);
+    if (!this.warping) {
+      this.accumulator += delta;
+      let ticks = 0;
+      while (this.accumulator >= TICK_REAL_MS && ticks < MAX_TICKS_PER_FRAME && !this.warping) {
+        this.simulate();
+        this.accumulator -= TICK_REAL_MS;
+        ticks++;
+      }
+      if (ticks === MAX_TICKS_PER_FRAME) this.accumulator = 0;
+    }
+    this.placeSprites();
+    this.updateCamera();
 
     const c = centerTile(this.body);
-    if (this.arrivalTile && (c.x !== this.arrivalTile.x || c.y !== this.arrivalTile.y)) this.arrivalTile = null;
-    const warp = this.location.warpAt(c.x, c.y);
-    if (warp && !this.arrivalTile) this.warpTo(warp.target, warp.toX, warp.toY);
-
     const f = facingTile(this.body);
     const action = this.location.action(f.x, f.y);
     this.params.onStatus(
       [
-        `${this.location.name} (${this.mapPath})  tile ${c.x},${c.y}`,
+        `${this.location.name} (${this.mapPath})  tile ${c.x},${c.y}  pos ${this.body.x.toFixed(2)},${this.body.y.toFixed(2)}`,
         action ? `Enfrente: ${action}  [X/E]` : "",
         this.message,
         "WASD/flechas = mover · Shift = caminar · X/E/clic derecho = interactuar",

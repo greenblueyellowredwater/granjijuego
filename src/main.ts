@@ -52,6 +52,7 @@ async function boot() {
   const { maps, map, season } = setupSelectors(manifest, params, mode);
   const status = (text: string) => ($("props").textContent = text);
   const game = createGame();
+  if (import.meta.env.DEV) (window as unknown as { __game: Phaser.Game }).__game = game;
 
   if (mode === "viewer") {
     $("status").textContent = `Visor · Stardew Valley ${manifest.gameVersion} · ${maps.length} mapas · rueda = zoom, arrastrar o flechas = mover`;

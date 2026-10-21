@@ -5,6 +5,7 @@ import { Worker } from "node:worker_threads";
 import { generateGameDataSchemes, type GeneratedSchemes } from "./clr/gamedata-schemes.ts";
 import { schemesToDts } from "./clr/dts.ts";
 import { Metadata } from "./clr/metadata.ts";
+import { readStaticIntArrays } from "./clr/static-arrays.ts";
 import type { Converted } from "./convert.ts";
 
 const out = console.log.bind(console);
@@ -84,6 +85,12 @@ export async function importContent(gameDir: string, outDir: string, typesFile: 
   mkdirSync(dirname(typesFile), { recursive: true });
   writeFileSync(typesFile, schemesToDts(schemes, version));
   out(`${Object.keys(schemes.schemes).length} esquemas y ${schemes.enums.length} enums → ${typesFile}`);
+
+  const generatedDir = join(outDir, "generated");
+  mkdirSync(generatedDir, { recursive: true });
+  const farmerTables = readStaticIntArrays(join(game, "Stardew Valley.dll"), "StardewValley.FarmerRenderer", ["featureYOffsetPerFrame", "featureXOffsetPerFrame"]);
+  writeFileSync(join(generatedDir, "farmer.json"), JSON.stringify(farmerTables));
+  out(`Tablas del granjero → ${join(generatedDir, "farmer.json")}`);
 
   const contentDir = join(game, "Content");
   const files = walk(contentDir)

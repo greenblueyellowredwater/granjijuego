@@ -33,6 +33,8 @@ async function holdUntil(page: Page, key: KeyInput, re: RegExp, timeout = 15000)
   }
 }
 
+const settle = () => new Promise((r) => setTimeout(r, 400));
+
 const checks: [string, (page: Page) => Promise<void>][] = [
   [
     "entra a la tienda de Pierre por la puerta y sale por el felpudo",
@@ -43,6 +45,7 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       await waitStatus(page, /Enfrente: LockedDoorWarp 6 29 SeedShop/);
       await page.keyboard.press("x");
       await waitStatus(page, /SeedShop .* tile 6,29/);
+      await settle();
       await page.screenshot({ path: `${OUT}/seedshop.png` });
       await holdUntil(page, "s", /Town .* tile 43,57/);
     },
@@ -56,7 +59,24 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       const selected = await page.$eval("#map", (el) => (el as HTMLSelectElement).value);
       if (selected !== "BusStop") throw new Error(`El selector quedó en ${selected}`);
       if (!page.url().includes("map=BusStop")) throw new Error(`La URL no siguió al jugador: ${page.url()}`);
+      await settle();
       await page.screenshot({ path: `${OUT}/busstop.png` });
+    },
+  ],
+  [
+    "centra los mapas más chicos que la pantalla",
+    async (page) => {
+      await page.goto(`${BASE}/?map=FarmHouse&x=5&y=8`);
+      await waitStatus(page, /FarmHouse .* tile 5,8/);
+      await settle();
+      await page.screenshot({ path: `${OUT}/farmhouse.png` });
+      const scroll = await page.evaluate(() => {
+        const cam = (window as any).__game?.scene.getScene("World")?.cameras.main;
+        return cam ? { x: cam.scrollX, y: cam.scrollY, w: cam.width, h: cam.height } : null;
+      });
+      if (!scroll) throw new Error("No pude leer la cámara");
+      const expected = { x: Math.floor((768 - scroll.w) / 2), y: Math.floor((768 - scroll.h) / 2) };
+      if (scroll.x !== expected.x || scroll.y !== expected.y) throw new Error(`Cámara ${JSON.stringify(scroll)} esperaba ${JSON.stringify(expected)}`);
     },
   ],
   [
