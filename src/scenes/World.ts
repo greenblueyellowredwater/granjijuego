@@ -5,7 +5,18 @@ import { FarmerAnimator } from "../world/farmer-animation.ts";
 import { Location, TILE } from "../world/location.ts";
 import { DotNetRandom } from "../world/dotnet-random.ts";
 import { locationEntities, type GameState, type StateStore } from "../world/state.ts";
-import { drawOps, generateLocationObjects, solidRect, treeTexture, type DrawOp, type GrassContext, type TerrainData } from "../world/terrain.ts";
+import {
+  drawOps,
+  generateLocationObjects,
+  solidRect,
+  stepTreeAlpha,
+  treeFadeRect,
+  treeTexture,
+  type DrawOp,
+  type GrassContext,
+  type TerrainData,
+} from "../world/terrain.ts";
+import type { Rect } from "../world/movement.ts";
 import {
   centerTile,
   collides,
@@ -90,6 +101,7 @@ export class World extends Phaser.Scene {
   private message = "";
   private warping = false;
   private running = true;
+  private fadingTrees: { rect: Rect; alpha: number; images: Phaser.GameObjects.Image[] }[] = [];
 
   constructor() {
     super("World");
@@ -102,6 +114,7 @@ export class World extends Phaser.Scene {
     this.message = "";
     this.accumulator = 0;
     this.animator = new FarmerAnimator();
+    this.fadingTrees = [];
   }
 
   preload() {
@@ -133,15 +146,33 @@ export class World extends Phaser.Scene {
       outdoors: String(this.location.props.Outdoors ?? "").toUpperCase().startsWith("T"),
       hasFrontTile: (x, y) => this.location.tile("Front", x, y) !== 0,
     };
-    for (const e of entities) for (const op of drawOps(e, this.params.terrain, this.params.season, grass)) this.addDrawOp(op);
+    for (const e of entities) {
+      const images = drawOps(e, this.params.terrain, this.params.season, grass)
+        .map((op) => ({ op, image: this.addDrawOp(op) }))
+        .filter((x) => x.op.fades && x.image)
+        .map((x) => x.image!);
+      const rect = e.kind === "tree" ? treeFadeRect(e) : null;
+      if (rect && images.length) this.fadingTrees.push({ rect, alpha: 1, images });
+    }
+  }
+
+  private updateTreeFade() {
+    const b = farmerBox(this.body.x, this.body.y);
+    for (const t of this.fadingTrees) {
+      const inside = b.x < t.rect.x + t.rect.w && t.rect.x < b.x + b.w && b.y < t.rect.y + t.rect.h && t.rect.y < b.y + b.h;
+      const next = stepTreeAlpha(t.alpha, inside);
+      if (next === t.alpha) continue;
+      t.alpha = next;
+      for (const img of t.images) img.setAlpha(next);
+    }
   }
 
   private addDrawOp(op: DrawOp) {
-    if (!this.textures.exists(op.texture)) return;
+    if (!this.textures.exists(op.texture)) return null;
     const tex = this.textures.get(op.texture);
     const frame = `${op.sx},${op.sy},${op.sw},${op.sh}`;
     if (!tex.has(frame)) tex.add(frame, 0, op.sx, op.sy, op.sw, op.sh);
-    this.add.image(op.x, op.y, op.texture, frame).setOrigin(0, 0).setScale(PIXEL_SCALE).setFlipX(op.flip).setDepth(this.rendered.spriteDepth(op.depth));
+    return this.add.image(op.x, op.y, op.texture, frame).setOrigin(0, 0).setScale(PIXEL_SCALE).setFlipX(op.flip).setDepth(this.rendered.spriteDepth(op.depth));
   }
 
   create() {
@@ -226,6 +257,7 @@ export class World extends Phaser.Scene {
     this.running = !this.keys.SHIFT.isDown;
     const result = step(this.location, this.body, pressed, this.running, TICK_MS);
     this.animator.tick(this.body.facing, pressed.size > 0, this.running, pressed.size, TICK_MS);
+    this.updateTreeFade();
     if (result.warp) this.warpTo(result.warp.target, result.warp.toX, result.warp.toY);
   }
 

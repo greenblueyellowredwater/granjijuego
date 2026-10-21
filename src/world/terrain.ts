@@ -42,6 +42,21 @@ export interface DrawOp {
   y: number;
   depth: number;
   flip: boolean;
+  fades?: boolean;
+}
+
+export const TREE_FADE_MIN = 0.4;
+const TREE_FADE_IN = 0.05;
+const TREE_FADE_OUT = 0.09;
+
+export function treeFadeRect(e: Extract<Entity, { kind: "tree" }>): Rect | null {
+  if (e.stage < 5) return null;
+  return { x: TILE * (e.x - 1), y: TILE * (e.y - 5), w: 192, h: 288 };
+}
+
+export function stepTreeAlpha(alpha: number, playerInside: boolean) {
+  const raised = Math.min(1, alpha + TREE_FADE_IN);
+  return playerInside ? Math.max(TREE_FADE_MIN, raised - TREE_FADE_OUT) : raised;
 }
 
 const WILD_TREE_BY_INDEX: Record<number, string> = { 9: "1", 10: "2", 11: "3", 12: "6", 31: "9", 32: "8" };
@@ -248,8 +263,8 @@ export function drawOps(e: Entity, data: TerrainData, season: SeasonName, grass?
         const shadow = isLeafy(info, season) ? { texture: CURSORS, ...TREE_SHADOW_LEAFY } : { texture: CURSORS_16, ...TREE_SHADOW_BARE };
         return [
           { ...shadow, x: px - 51, y: py - 16, depth: 1e-6, flip: e.flipped },
-          { texture, sx: 32, sy: 96, sw: 16, sh: 32, x: px, y: py - 64, depth: bottom / 10000, flip: e.flipped },
-          { texture, sx: 0, sy: 0, sw: 48, sh: 96, x: px - 64, y: py - 320, depth: (bottom + 2) / 10000 - e.x / 1e6, flip: e.flipped },
+          { texture, sx: 32, sy: 96, sw: 16, sh: 32, x: px, y: py - 64, depth: bottom / 10000, flip: e.flipped, fades: true },
+          { texture, sx: 0, sy: 0, sw: 48, sh: 96, x: px - 64, y: py - 320, depth: (bottom + 2) / 10000 - e.x / 1e6, flip: e.flipped, fades: true },
         ];
       }
       const rect = e.stage === 0 ? [32, 128, 16, 16] : e.stage === 1 ? [0, 128, 16, 16] : e.stage === 2 ? [16, 128, 16, 16] : [0, 96, 16, 32];

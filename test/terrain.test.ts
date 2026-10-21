@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Location, TILE, type TiledMap } from "../src/world/location.ts";
 import { collides, positionForTile } from "../src/world/movement.ts";
 import { DotNetRandom } from "../src/world/dotnet-random.ts";
-import { bushSourceRect, drawOps, generateLocationObjects, grassBlades, grassSourceOffset, loadsPathsObjects, solidRect, spawnFromPaths as spawnRaw, treesFromMapProperty, treeTexture, type Entity, type TerrainData } from "../src/world/terrain.ts";
+import { stepTreeAlpha, treeFadeRect, bushSourceRect, drawOps, generateLocationObjects, grassBlades, grassSourceOffset, loadsPathsObjects, solidRect, spawnFromPaths as spawnRaw, treesFromMapProperty, treeTexture, type Entity, type TerrainData } from "../src/world/terrain.ts";
 
 const spawnFromPaths = (loc: Location, season: Parameters<typeof spawnRaw>[1], outdoors: boolean, rng = new DotNetRandom(7)) => spawnRaw(loc, season, outdoors, rng);
 
@@ -179,5 +179,25 @@ describe("comportamiento del original", () => {
     const ops = drawOps({ kind: "grass", x: 1, y: 1, grassType: 1 }, data, "spring", ctx);
     expect(ops).toHaveLength(3);
     expect(ops[0]).toMatchObject({ texture: "TerrainFeatures/grass", sw: 15, sh: 20, sy: 0 });
+  });
+});
+
+describe("transparencia de árboles", () => {
+  it("baja hasta 0,4 con el jugador detrás de la copa y vuelve a 1", () => {
+    let a = 1;
+    const seq: number[] = [];
+    for (let i = 0; i < 20; i++) seq.push((a = stepTreeAlpha(a, true)));
+    expect(seq[0]).toBeCloseTo(0.91);
+    expect(seq[1]).toBeCloseTo(0.87);
+    expect(seq.at(-1)).toBeCloseTo(0.4);
+    for (let i = 0; i < 12; i++) a = stepTreeAlpha(a, false);
+    expect(a).toBe(1);
+  });
+
+  it("usa la zona de la copa y solo en árboles adultos", () => {
+    expect(treeFadeRect({ kind: "tree", x: 10, y: 20, treeId: "1", stage: 5, flipped: false })).toEqual({ x: 576, y: 960, w: 192, h: 288 });
+    expect(treeFadeRect({ kind: "tree", x: 10, y: 20, treeId: "1", stage: 3, flipped: false })).toBeNull();
+    const ops = drawOps({ kind: "tree", x: 3, y: 4, treeId: "1", stage: 5, flipped: false }, data, "spring");
+    expect(ops.map((o) => !!o.fades)).toEqual([false, true, true]);
   });
 });

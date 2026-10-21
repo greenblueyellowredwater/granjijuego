@@ -261,6 +261,7 @@ Fuente: `GameLocation.loadObjects`, `loadPathsLayerObjectsInArea`, `TryGetTreeId
 - Sombra: de `Cursors (663,1011,41,30)` si es frondoso en la estación actual (`IsLeafy`, `IsLeafyInWinter`, `IsLeafyInFall`), o de `Cursors_1_6 (469,298,42,31)` si no. Se dibuja en `(tx·64−51, ty·64−16)`, escala 4, profundidad 1e−6.
 - Copa: `(0,0,48,96)` de la textura (48 = con semilla, 96 = con musgo), con la esquina en `(tx·64−64, ty·64−320)`. Profundidad `((ty+1)·64 + 2)/10000 − tx/10⁶`. Espejado al azar.
 - Tronco: `(32,96,16,32)` en `(tx·64, ty·64−64)`, profundidad `(ty+1)·64/10000`.
+- Transparencia (`Tree.tickUpdate`): en cada tick, `alfa = min(1, alfa + 0,05)`. Si el árbol es adulto (sin tocón y sin estar cayendo) y la caja del jugador se superpone con `(64·(tx−1), 64·(ty−5), 192, 288)`, además `alfa = max(0,4, alfa − 0,09)`. El alfa se aplica a la copa y al tronco, no a la sombra.
 - Árboles jóvenes (etapa < 5): `(32|0|16, 128, 16, 16)` para las etapas 0 / 1 / 2, o `(0, 96, 16, 32)` para la 3 y la 4. El sprite se dibuja centrado horizontalmente en el tile y apoyado en su borde inferior.
 
 **Arbusto** (`TileSheets/bushes`; tamaño efectivo: el 3 cuenta como 0 y el 4 como 1):
