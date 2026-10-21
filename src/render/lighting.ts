@@ -1,5 +1,5 @@
 import Phaser from "phaser";
-import { lightmapFill, type Lighting } from "../world/clock.ts";
+import { lightmapFill, RAIN_VEIL, type Lighting } from "../world/clock.ts";
 import { LIGHT_TEXTURES, LIGHTMAP_SCALE as Q, lightmapSize, lightQuad, type LightSource } from "../world/lights.ts";
 
 export const LIGHTMAP_DEPTH = 90;
@@ -8,6 +8,7 @@ const LIGHTMAP_KEY = "lighting:lightmap";
 export class LightingOverlay {
   private canvas: Phaser.Textures.CanvasTexture | null = null;
   private image: Phaser.GameObjects.Image | null = null;
+  private veil: Phaser.GameObjects.Image | null = null;
   private readonly cutouts = new Map<number, HTMLCanvasElement | null>();
   private readonly blendMode: number;
 
@@ -55,7 +56,18 @@ export class LightingOverlay {
     return this.canvas;
   }
 
-  draw(lighting: Lighting, lights: LightSource[], camera: Phaser.Cameras.Scene2D.Camera) {
+  private drawVeil(visible: boolean, camera: Phaser.Cameras.Scene2D.Camera) {
+    if (!visible) {
+      this.veil?.setVisible(false);
+      return;
+    }
+    this.veil ??= this.scene.add.image(0, 0, "__WHITE").setOrigin(0, 0).setScrollFactor(0).setDepth(LIGHTMAP_DEPTH + 0.1).setBlendMode(this.blendMode);
+    const [r, g, b] = RAIN_VEIL;
+    this.veil.setDisplaySize(camera.width, camera.height).setTint((r << 16) | (g << 8) | b).setVisible(true);
+  }
+
+  draw(lighting: Lighting, lights: LightSource[], camera: Phaser.Cameras.Scene2D.Camera, rainVeil = false) {
+    this.drawVeil(lighting.draw && rainVeil, camera);
     if (!lighting.draw) {
       this.image?.setVisible(false);
       return;

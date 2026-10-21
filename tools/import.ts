@@ -5,7 +5,7 @@ import { Worker } from "node:worker_threads";
 import { generateGameDataSchemes, type GeneratedSchemes } from "./clr/gamedata-schemes.ts";
 import { schemesToDts } from "./clr/dts.ts";
 import { Metadata } from "./clr/metadata.ts";
-import { readStaticIntArrays } from "./clr/static-arrays.ts";
+import { readInlineIntArrays, readStaticIntArrays } from "./clr/static-arrays.ts";
 import type { Converted } from "./convert.ts";
 
 const out = console.log.bind(console);
@@ -91,6 +91,9 @@ export async function importContent(gameDir: string, outDir: string, typesFile: 
   const farmerTables = readStaticIntArrays(join(game, "Stardew Valley.dll"), "StardewValley.FarmerRenderer", ["featureYOffsetPerFrame", "featureXOffsetPerFrame"]);
   writeFileSync(join(generatedDir, "farmer.json"), JSON.stringify(farmerTables));
   out(`Tablas del granjero → ${join(generatedDir, "farmer.json")}`);
+  const [greenRainDays] = readInlineIntArrays(join(game, "Stardew Valley.dll"), "StardewValley.Utility::isGreenRainDay");
+  writeFileSync(join(generatedDir, "calendar.json"), JSON.stringify({ greenRainDays }));
+  out(`Calendario → ${join(generatedDir, "calendar.json")}`);
 
   const contentDir = join(game, "Content");
   const files = walk(contentDir)

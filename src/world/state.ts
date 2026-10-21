@@ -12,6 +12,8 @@ export interface GameState {
   dayOfMonth: number;
   year: number;
   money: number;
+  weather: string;
+  weatherForTomorrow: string;
   appearance?: Appearance;
   locations: Record<string, { entities: Entity[] }>;
 }
@@ -25,13 +27,22 @@ export function newGameState(random = Math.random): GameState {
     dayOfMonth: 1,
     year: 1,
     money: 500,
+    weather: "Sun",
+    weatherForTomorrow: "Sun",
     appearance: DEFAULT_APPEARANCE,
     locations: {},
   };
 }
 
 export function withDefaults(state: GameState): GameState {
-  return { ...state, dayOfMonth: state.dayOfMonth ?? 1, year: state.year ?? 1, money: state.money ?? 500 };
+  return {
+    ...state,
+    dayOfMonth: state.dayOfMonth ?? 1,
+    year: state.year ?? 1,
+    money: state.money ?? 500,
+    weather: state.weather ?? "Sun",
+    weatherForTomorrow: state.weatherForTomorrow ?? "Sun",
+  };
 }
 
 export interface StateStore {

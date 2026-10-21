@@ -13,7 +13,14 @@ export const WHITE: RGBA = [255, 255, 255, 255];
 export const EVENING_COLOR: RGBA = [255, 255, 0, 255];
 export const RAIN_AMBIENT: RGBA = [255, 200, 80, 255];
 export const INDOOR_LIGHTING: RGBA = [100, 120, 30, 255];
+export const ORANGE_RED: RGBA = [255, 69, 0, 255];
+export const RAIN_VEIL = scaleColorConst(ORANGE_RED, 0.45);
 export const INDOOR_LIGHTING_NIGHT: RGBA = [150, 150, 30, 255];
+
+function scaleColorConst(c: RGBA, s: number): RGBA {
+  const f = Math.fround(s);
+  return c.map((v) => Math.trunc(v * f)) as RGBA;
+}
 
 export interface Calendar {
   season: SeasonName;

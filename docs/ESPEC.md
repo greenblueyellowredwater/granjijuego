@@ -116,7 +116,7 @@ Cambio de día: `NewDay` → `newDayAfterFade` → clima, `GameLocation.DayUpdat
 | 1 | Importador + visor de mapas | **hecho** |
 | 2 | Caminar por el pueblo: colisión (`Passable`/Buildings), warps, cámara, sprite del granjero | **hecho** (spec S2) |
 | 2b | Vegetación y objetos de `Paths`, agua animada, orden de dibujo por lotes | **hecho** (specs S3 y S4) |
-| 3 | Reloj, días, estaciones, iluminación, HUD y sueño | **hecho** (spec S6); falta el clima |
+| 3 | Reloj, días, estaciones, iluminación, HUD, sueño y clima | **hecho** (specs S6 y S7) |
 | 4 | Granja básica: azada, regadera, HoeDirt, cultivos, inventario, shipping | |
 | 5 | GameStateQuery, ItemQuery, tiendas, máquinas | |
 | 6 | NPCs: schedules, pathfinding, diálogo, regalos | |
@@ -412,7 +412,60 @@ Fuente: `Game1.UpdateGameClock`, `performTenMinuteClockUpdate` (lambda), `getSta
 - Cama inicial de la casa con dibujo en dos capas, colisión, pregunta para dormir, fundido y despertar en la cama del día siguiente. La fecha se guarda en la partida.
 - Parámetro de desarrollo `?time=hhmm`.
 
-Pendiente del hito: clima (lluvia, nieve, viento, tormenta), el resto de los muebles iniciales, el sprite del granjero acostado, el menú de envíos al dormir y la caja de diálogo definitiva.
+Clima (spec S7): GSQ, pronóstico diario, lluvia, nieve y viento dibujados, efecto en la luz y parámetro `?weather=`. Pendiente del hito: rayos de tormenta (`performLightningUpdate`), sonido ambiente, el resto de los muebles iniciales, el sprite del granjero acostado, el menú de envíos al dormir y la caja de diálogo definitiva.
+
+## Spec S7: clima y GameStateQuery
+
+Fuente: `Game1.UpdateWeatherForNewDay`, `getWeatherModificationsForDate`, `ApplyWeatherForNewDay`, `LocationWeather.UpdateDailyWeather`, `Utility.isGreenRainDay`, `isFestivalDay`, `TryGetPassiveFestivalDataForDay`, `TryCreateIntervalRandom`, `CreateDaySaveRandom`, `HashUtility.GetDeterministicHashCode`, `GameStateQuery` (`Parse`, `CheckConditions`, `CheckConditionsImpl`, `Helpers.RandomImpl` y los resolvers usados), `Game1.drawWeather`, `updateWeather`, `updateRaindropPosition`, `randomizeRainPositions`, `populateDebrisWeatherArray`, `updateFloatingObjectPositionForMovement` y `WeatherDebris`.
+
+**GameStateQuery:**
+- Las condiciones se separan por comas fuera de comillas. Cada una se separa por espacios, también respetando comillas.
+- Un `!` inicial niega la condición. Vacío o `TRUE` es verdadero; `FALSE` es falso.
+- Una consulta desconocida hace falso todo el conjunto. Un error de argumentos cuenta como `false` y después se aplica la negación.
+
+Resolvers implementados:
+- `SEASON_DAY`: pares estación/día.
+- `DAY_OF_MONTH`: números, `even` u `odd`.
+- `DAYS_PLAYED min [max]`, `SEASON`, `YEAR min [max]`.
+- `RANDOM p [@addDailyLuck]`: `NextDouble() < p`, con el generador del contexto.
+- `SYNCED_RANDOM intervalo clave p`:
+  - El generador es `CreateRandom(hash(clave), uniqueId, valor)`, donde `valor` según el intervalo es: `tick` → ticks, `day` → `daysPlayed`, `season` → `hash(estación+año)`, `year` → `hash("year"+año)`.
+  - `hash` es xxHash32 con semilla 0 sobre los bytes UTF-8, leído como int32.
+- `SYNCED_SUMMER_RAIN_RANDOM`: `CreateDaySaveRandom(hash("summer_rain_chance"))`, que es `CreateRandom(daysPlayed, ⌊uniqueId/2⌋, …)`, comparado contra `0,12 + día·0,003`.
+- `IS_GREEN_RAIN_DAY`: si mañana es día de lluvia verde. Solo en verano: `CreateRandom(año·777, uniqueId)` elige uno de los días `[5,6,7,14,15,16,18,23]`, un arreglo estático que se extrae del DLL al importar.
+- `ANY` y `TRUE`/`FALSE`.
+
+**Día nuevo.** Primero se avanza la fecha. El pronóstico guardado pasa por `getWeatherModificationsForDate`, en este orden:
+1. Sol si es día 1 o `daysPlayed ≤ 4`.
+2. Lluvia si `daysPlayed = 3`.
+3. `GreenRain` si toca.
+4. Tormenta en verano los días múltiplos de 13.
+5. `Festival` si hay festival.
+6. Sol si hay un festival pasivo del valle (`MapReplacements` en una location del valle) que cumple su condición.
+
+El resultado es el clima de hoy. Después se calcula el de mañana:
+- `Festival` si mañana hay festival.
+- Sol si mañana hay un festival pasivo del contexto.
+- Si no, el `Weather` de la primera `WeatherConditions` del contexto (`Data/LocationContexts`) cuya condición se cumple **hoy**.
+
+Banderas: `Rain` → lluvia; `Storm` → lluvia y rayos; `Wind` → viento con hojas; `Snow` → nieve; `GreenRain` → lluvia verde. `Desert` e `Island*` tienen su propio contexto; por ahora, sol.
+
+**Efectos de la lluvia en la luz:** luz ambiente exterior (255,200,80), `outdoorLight` ×0,3, sin luces de ventana ni brillos, `NightTiles` al entrar (salvo `SandyHouse`), y un velo `OrangeRed·0,45` = (114,31,0) restado al cuadrado sobre la pantalla en exteriores.
+
+**Dibujo** (solo en exteriores, después de `AlwaysFront` y antes del lightmap):
+- **Lluvia:** 70 gotas en coordenadas de pantalla. Arrancan con posición, frame (0–3) y acumulador (0–69) al azar.
+  - Con frame 0, cada 70 ms la gota `i` avanza `(−16 + ⌊8i/70⌋, 32 − ⌊8i/70⌋)` y con probabilidad 0,1 empieza a salpicar. Si se va por abajo (más de alto + 64), vuelve a −64.
+  - Al salpicar, avanza un frame cada más de 70 ms y, al volver a 0, reaparece en un lugar al azar.
+  - Textura `TileSheets/rain` en cuadros de 16×16 (frame + 4 si la lluvia es verde), a escala ×4, en blanco. La lluvia verde se dibuja dos veces en `LimeGreen`.
+  - Cuando la cámara se mueve, las gotas se desplazan en sentido contrario y dan la vuelta por los bordes.
+- **Nieve:** baldosas de `Cursors (368 + ⌊(t mod 1200)/75⌋·16, 192, 16, 16)` cada 64 px desde `−64 + snowPos mod 64`, a escala ×4,001 y con blanco·0,8. `snowPos` se mueve al revés que la cámara.
+- **Viento:** entre 16 y 63 partículas `WeatherDebris`.
+  - Tipo según la estación: primavera 0, verano 1, otoño 2, invierno 3. Rectángulos: `(352,1200)`, `(352,1184)`, `(352,1216)` de 16×16, o `(391+4k, 1236)` de 4×4. Se dibujan a escala ×3.
+  - Velocidad inicial `dx = rand(−10,0)/50` y `dy = rand(10)/50`. Se mueven `dx + globalWind` y `dy + 0,5` por tick.
+  - Hay ráfagas y una animación de 11 cuadros con rebotes.
+  - `globalWind` vale −0,25. En otoño, con probabilidad 0,001 arranca una ráfaga que crece ×1,02 hasta −5 y después vuelve a −0,5 a razón de 0,015 por tick.
+
+**Ícono del HUD:** sale de las banderas (ver S6).
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

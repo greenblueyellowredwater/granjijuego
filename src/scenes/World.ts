@@ -15,6 +15,9 @@ import { LightingOverlay } from "../render/lighting.ts";
 import { DIALOGUE_FONT, Hud, type HudStrings } from "../render/hud.ts";
 import { QuestionBox } from "../render/question.ts";
 import type { SpriteFontData } from "../render/spritefont.ts";
+import { RAIN_TEXTURE, WeatherRenderer } from "../render/weather.ts";
+import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
+import { daySaveRandom, type GsqState } from "../world/gsq.ts";
 import {
   bedSleepTile,
   bedBox,
@@ -84,6 +87,8 @@ export interface WorldData {
   store: StateStore;
   clock: GameClock;
   text: WorldText;
+  weather: WeatherData;
+  greenRainDays: number[];
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
 }
@@ -135,6 +140,7 @@ export class World extends Phaser.Scene {
   private hasMoved = false;
   private lastTile = { x: -1, y: -1 };
   private endingDay = false;
+  private weatherFx: WeatherRenderer | null = null;
 
   constructor() {
     super("World");
@@ -166,8 +172,18 @@ export class World extends Phaser.Scene {
     return String(this.location.props.Outdoors ?? "").toUpperCase().startsWith("T");
   }
 
+  private get weather(): WeatherFlags {
+    const flags = weatherFlags(this.params.state.weather);
+    return hasOwnWeather(this.location.name) ? flags : weatherFlags("Sun");
+  }
+
   private get lightingContext(): LightingContext {
-    return { season: this.params.state.season, outdoors: this.outdoors, raining: false };
+    return { season: this.params.state.season, outdoors: this.outdoors, raining: this.weather.raining };
+  }
+
+  private gsqState(): GsqState {
+    const { state, greenRainDays } = this.params;
+    return { season: state.season, dayOfMonth: state.dayOfMonth, year: state.year, daysPlayed: state.daysPlayed, uniqueId: state.uniqueId, greenRainDays };
   }
 
   preload() {
@@ -186,6 +202,7 @@ export class World extends Phaser.Scene {
       "TileSheets/bushes",
       "TerrainFeatures/grass",
       "TileSheets/furniture",
+      RAIN_TEXTURE,
       DIALOGUE_FONT,
       ...LightingOverlay.textureKeys(),
     ]);
@@ -240,14 +257,15 @@ export class World extends Phaser.Scene {
   private setupLights() {
     const { time } = this.params.clock;
     const turnOff = isTimeToTurnOffLighting(time, this.lightingContext);
+    const raining = this.weather.raining;
     let glows: { x: number; y: number }[] = [];
     if (!this.outdoors && !turnOff) glows = dayTileGlows(this.applyTiles("DayTiles"));
-    if (turnOff) {
+    if (turnOff || (raining && this.location.name !== "SandyHouse")) {
       this.applyTiles("NightTiles");
       if (this.location.name === "MineShaft" || this.location.name === "Woods") glows = dayTileGlows(tileChanges(this.location.props.DayTiles));
       else glows = [];
     }
-    this.lightSources = locationLights(this.location.name, this.location.props, glows, { turnOff, raining: false });
+    this.lightSources = locationLights(this.location.name, this.location.props, glows, { turnOff, raining });
   }
 
   private setupWater() {
@@ -337,6 +355,7 @@ export class World extends Phaser.Scene {
 
     const fontData = this.cache.json.get(FONT_DATA) as SpriteFontData | undefined;
     this.overlay = new LightingOverlay(this);
+    this.weatherFx = new WeatherRenderer(this);
     this.hud = fontData ? new Hud(this, fontData, this.params.text) : null;
     this.question = fontData ? new QuestionBox(this, fontData) : null;
 
@@ -440,6 +459,11 @@ export class World extends Phaser.Scene {
     this.cameras.main.fadeOut(1000, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       Object.assign(state, nextDay(state));
+      const gsq = this.gsqState();
+      const random = daySaveRandom(gsq);
+      const weather = updateWeatherForNewDay(gsq, state.weatherForTomorrow, this.params.weather, { state: gsq, random });
+      state.weather = weather.today;
+      state.weatherForTomorrow = weather.tomorrow;
       clock.time = 600;
       clock.interval = 0;
       clock.shakeMs = 0;
@@ -461,6 +485,7 @@ export class World extends Phaser.Scene {
     if (this.body.x !== before.x || this.body.y !== before.y) this.hasMoved = true;
     if (this.bed) this.bedOffset = bedTileOffset(this.bedOffset, bedBox(this.bed, this.params.terrain), farmerBox(this.body.x, this.body.y), this.body.x);
     this.onClockEvents(this.params.clock.tick(TICK_MS, this.lightingContext, this.timePasses));
+    this.weatherFx?.tick(TICK_MS, this.weather, this.outdoors, this.params.state.season, this.cameras.main);
     if (result.warp) this.warpTo(result.warp.target, result.warp.toX, result.warp.toY);
     else this.checkTouchActions();
   }
@@ -469,15 +494,26 @@ export class World extends Phaser.Scene {
     const { clock, state } = this.params;
     const ctx = this.lightingContext;
     const turnOff = isTimeToTurnOffLighting(clock.time, ctx);
-    this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: false }) || l.fadeOut < 0);
-    this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main);
+    const flags = this.weather;
+    this.weatherFx?.draw(flags, this.outdoors, this.cameras.main, time);
+    this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: flags.raining }));
+    this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
     this.hud?.draw(
       {
         time: clock.time,
         interval: clock.interval,
         dayOfMonth: state.dayOfMonth,
         seasonIndex: SEASON_ORDER.indexOf(state.season),
-        weatherIcon: weatherIcon({ season: state.season }),
+        weatherIcon: weatherIcon({
+          season: state.season,
+          raining: flags.raining,
+          snowing: flags.snowing,
+          lightning: flags.lightning,
+          debris: flags.debris,
+          greenRain: flags.greenRain,
+          festival: state.weather === "Festival",
+          wedding: state.weather === "Wedding",
+        }),
         money: state.money,
         shaking: clock.shakeMs > 0,
         timePasses: this.timePasses,

@@ -5,6 +5,7 @@ import { World, type LocationsData } from "./scenes/World.ts";
 import type { TerrainData } from "./world/terrain.ts";
 import { localStore } from "./world/state.ts";
 import { GameClock } from "./world/clock.ts";
+import type { WeatherData } from "./world/weather.ts";
 import type { ClothingData } from "./world/farmer-appearance.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -65,7 +66,7 @@ async function boot() {
   }
 
   const load = async (key: string) => (await fetch(contentUrl(key, "json"))).json();
-  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon] = (await Promise.all([
+  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon, contexts, festivalDates, passiveFestivals, calendar] = (await Promise.all([
     load("Data/Locations"),
     load("Data/WildTrees"),
     load("Data/Objects"),
@@ -75,6 +76,10 @@ async function boot() {
     load("Strings/StringsFromCSFiles"),
     load("Strings/Locations"),
     load("Strings/Lexicon"),
+    load("Data/LocationContexts"),
+    load("Data/Festivals/FestivalDates"),
+    load("Data/PassiveFestivals"),
+    load("generated/calendar").catch(() => ({ greenRainDays: [] })),
   ])) as [
     LocationsData,
     TerrainData["wildTrees"],
@@ -85,6 +90,10 @@ async function boot() {
     Record<string, string>,
     Record<string, string>,
     Record<string, string>,
+    Record<string, { WeatherConditions?: WeatherData["conditions"] | null }>,
+    Record<string, string>,
+    WeatherData["passiveFestivals"],
+    { greenRainDays: number[] },
   ];
   const terrain: TerrainData = {
     wildTrees,
@@ -116,6 +125,8 @@ async function boot() {
   const seasonOverride = params.get("season");
   if (seasonOverride && SEASONS.includes(seasonOverride as Season)) state.season = seasonOverride as Season;
   $<HTMLSelectElement>("season").value = state.season;
+  const weatherOverride = params.get("weather");
+  if (weatherOverride) state.weather = weatherOverride;
   const time = Number(params.get("time"));
   const clock = new GameClock(Number.isInteger(time) && time >= 600 && time <= 2600 ? time : 600);
   game.scene.add("World", World, true, {
@@ -123,6 +134,8 @@ async function boot() {
     season: state.season,
     clock,
     text,
+    weather: { conditions: contexts.Default?.WeatherConditions ?? [], festivalDates, passiveFestivals },
+    greenRainDays: calendar.greenRainDays ?? [],
     locations,
     start: { location: map, x: x === null ? undefined : +x, y: y === null ? undefined : +y },
     terrain,
