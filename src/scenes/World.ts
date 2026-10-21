@@ -7,6 +7,8 @@ import { DotNetRandom } from "../world/dotnet-random.ts";
 import { locationEntities, type GameState, type StateStore } from "../world/state.ts";
 import { buildWaterGrid, WATER_TEXTURE, waterColor, waterPieces, WaterState, type WaterGrid } from "../world/water.ts";
 import { DEPTH } from "../render/tilemap.ts";
+import { FarmerSprite, farmerTextureKeys } from "../render/farmer.ts";
+import { DEFAULT_APPEARANCE, type ClothingData } from "../world/farmer-appearance.ts";
 import {
   drawOps,
   generateLocationObjects,
@@ -35,11 +37,8 @@ import {
 } from "../world/movement.ts";
 
 const PIXEL_SCALE = TILE / 16;
-const FARMER_TEXTURE = "Characters/Farmer/farmer_base";
 const SHADOW_TEXTURE = "LooseSprites/shadow";
 const FARMER_TABLES = "generated/farmer";
-const SHEET_COLUMNS = 18;
-const ARM_OFFSET_COLUMNS = 6;
 const MAX_TICKS_PER_FRAME = 8;
 const TICK_REAL_MS = 1000 / TICKS_PER_SECOND;
 
@@ -58,6 +57,7 @@ export interface WorldData {
   locations: LocationsData;
   start: WorldStart;
   terrain: TerrainData;
+  clothing: ClothingData;
   state: GameState;
   store: StateStore;
   onStatus: (text: string) => void;
@@ -78,10 +78,6 @@ export function parseActionWarp(action: string): DoorWarp | null {
   return { target, x: +x, y: +y };
 }
 
-export function sheetFrame(gameFrame: number) {
-  return Math.floor(gameFrame / 6) * SHEET_COLUMNS + (gameFrame % 6);
-}
-
 export function viewportScroll(center: number, viewport: number, mapSize: number) {
   if (mapSize < viewport) return Math.floor((mapSize - viewport) / 2);
   return Math.max(0, Math.min(Math.floor(center - viewport / 2), mapSize - viewport));
@@ -94,11 +90,11 @@ export class World extends Phaser.Scene {
   private location!: Location;
   private body!: Body;
   private animator = new FarmerAnimator();
-  private bodySprite!: Phaser.GameObjects.Image;
-  private armsSprite!: Phaser.GameObjects.Image;
+  private farmer!: FarmerSprite;
   private shadow!: Phaser.GameObjects.Image;
   private keys!: Record<string, Phaser.Input.Keyboard.Key>;
   private featureYOffset: number[] = [];
+  private featureXOffset: number[] = [];
   private accumulator = 0;
   private message = "";
   private warping = false;
@@ -109,6 +105,10 @@ export class World extends Phaser.Scene {
 
   constructor() {
     super("World");
+  }
+
+  private get appearance() {
+    return this.params.state.appearance ?? DEFAULT_APPEARANCE;
   }
 
   init(data: WorldData) {
@@ -126,8 +126,8 @@ export class World extends Phaser.Scene {
   preload() {
     if (!this.params.manifest.maps.includes(this.mapPath)) return;
     queueTilemap(this, this.mapPath, this.params.manifest, this.params.season);
-    if (!this.textures.exists(FARMER_TEXTURE)) {
-      this.load.spritesheet(FARMER_TEXTURE, contentUrl(FARMER_TEXTURE, "png"), { frameWidth: 16, frameHeight: 32 });
+    for (const key of Object.values(farmerTextureKeys(this.appearance))) {
+      if (!this.textures.exists(key)) this.load.image(key, contentUrl(key, "png"));
     }
     if (!this.textures.exists(SHADOW_TEXTURE)) this.load.image(SHADOW_TEXTURE, contentUrl(SHADOW_TEXTURE, "png"));
     if (!this.cache.json.exists(FARMER_TABLES)) this.load.json(FARMER_TABLES, contentUrl(FARMER_TABLES, "json"));
@@ -224,6 +224,7 @@ export class World extends Phaser.Scene {
     this.rendered = new RenderedMap(this, this.mapPath, this.params.manifest, this.params.season, PIXEL_SCALE);
     this.location = new Location(start.location, this.rendered.data);
     this.featureYOffset = this.cache.json.get(FARMER_TABLES)?.featureYOffsetPerFrame ?? [];
+    this.featureXOffset = this.cache.json.get(FARMER_TABLES)?.featureXOffsetPerFrame ?? [];
     this.spawnTerrain();
     this.setupWater();
 
@@ -233,8 +234,7 @@ export class World extends Phaser.Scene {
     this.params.onEnter?.(start.location, spawn);
 
     this.shadow = this.add.image(0, 0, SHADOW_TEXTURE);
-    this.bodySprite = this.add.image(0, 0, FARMER_TEXTURE, 0).setOrigin(0, 0).setScale(PIXEL_SCALE);
-    this.armsSprite = this.add.image(0, 0, FARMER_TEXTURE, ARM_OFFSET_COLUMNS).setOrigin(0, 0).setScale(PIXEL_SCALE);
+    this.farmer = new FarmerSprite(this, this.appearance, this.params.clothing, this.featureXOffset, this.featureYOffset);
 
     const cam = this.cameras.main;
     cam.setZoom(1).setBackgroundColor("#000").setRoundPixels(true);
@@ -308,17 +308,13 @@ export class World extends Phaser.Scene {
     const f = this.animator.frame;
     const x = Math.floor(this.body.x);
     const y = Math.floor(this.body.y) - 96 + f.offsetY * PIXEL_SCALE;
-    const frame = sheetFrame(f.frame);
-    this.bodySprite.setFrame(frame).setPosition(x, y).setFlipX(f.flip);
-    this.armsSprite.setFrame(frame + ARM_OFFSET_COLUMNS).setPosition(x, y).setFlipX(f.flip);
     const shrink = this.running && this.animator.animationIndexInLoop > 1 ? Math.abs(this.featureYOffset[f.frame] ?? 0) * 0.5 : 0;
     this.shadow.setPosition(this.body.x + 32, this.body.y + 24).setScale(PIXEL_SCALE - shrink);
     const box = farmerBox(this.body.x, this.body.y);
     const drawLayer = (box.y + box.h / 2) / 10000;
     const layer = this.rendered.spriteDepth(drawLayer);
     this.shadow.setDepth(shadowAboveBuildings(this.location, this.body) ? this.rendered.spriteDepth(drawLayer - 1e-6) : this.rendered.belowBuildingsDepth);
-    this.bodySprite.setDepth(layer);
-    this.armsSprite.setDepth(layer + 1e-7);
+    this.farmer.update(f, this.body.facing, x, y, layer);
   }
 
   private updateCamera() {

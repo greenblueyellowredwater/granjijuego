@@ -1,4 +1,5 @@
 import type { Entity, SeasonName } from "./terrain.ts";
+import { DEFAULT_APPEARANCE, type Appearance } from "./farmer-appearance.ts";
 
 const STORAGE_KEY = "stardew-ts/partida";
 const VERSION = 1;
@@ -8,6 +9,7 @@ export interface GameState {
   uniqueId: number;
   daysPlayed: number;
   season: SeasonName;
+  appearance?: Appearance;
   locations: Record<string, { entities: Entity[] }>;
 }
 
@@ -17,6 +19,7 @@ export function newGameState(random = Math.random): GameState {
     uniqueId: Math.floor(random() * 2 ** 48),
     daysPlayed: 1,
     season: "spring",
+    appearance: DEFAULT_APPEARANCE,
     locations: {},
   };
 }

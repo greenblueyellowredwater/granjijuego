@@ -4,6 +4,7 @@ import { MapViewer } from "./scenes/MapViewer.ts";
 import { World, type LocationsData } from "./scenes/World.ts";
 import type { TerrainData } from "./world/terrain.ts";
 import { localStore } from "./world/state.ts";
+import type { ClothingData } from "./world/farmer-appearance.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -63,11 +64,13 @@ async function boot() {
   }
 
   const load = async (key: string) => (await fetch(contentUrl(key, "json"))).json();
-  const [locations, wildTrees, objects] = (await Promise.all([load("Data/Locations"), load("Data/WildTrees"), load("Data/Objects")])) as [
-    LocationsData,
-    TerrainData["wildTrees"],
-    TerrainData["objects"],
-  ];
+  const [locations, wildTrees, objects, shirts, pants] = (await Promise.all([
+    load("Data/Locations"),
+    load("Data/WildTrees"),
+    load("Data/Objects"),
+    load("Data/Shirts"),
+    load("Data/Pants"),
+  ])) as [LocationsData, TerrainData["wildTrees"], TerrainData["objects"], ClothingData["shirts"], ClothingData["pants"]];
   const terrain: TerrainData = { wildTrees, objects, bushTextureWidth: manifest.textures["TileSheets/bushes"]?.width ?? 128 };
   $("status").textContent = `Stardew Valley ${manifest.gameVersion} · ?mode=viewer para el visor de mapas`;
   const store = localStore();
@@ -86,6 +89,7 @@ async function boot() {
     locations,
     start: { location: map, x: x === null ? undefined : +x, y: y === null ? undefined : +y },
     terrain,
+    clothing: { shirts, pants },
     state,
     store,
     onStatus: status,

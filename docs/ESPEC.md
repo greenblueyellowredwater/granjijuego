@@ -310,6 +310,33 @@ Fuente: `GameLocation.loadMap`, `updateWater`, `drawWater`, `drawWaterTile`, `re
 
 **Color del agua** (`resetSharedState`), con alfa 50 %: primavera (120,200,255), verano (60,240,255), otoño (255,130,200), invierno (130,80,255). En `Beach`, en verano de los días 12 a 14, (0,255,0) al 40 %. Son pendientes los colores propios de `Sewer`, `Caldera`, `MineShaft`, `VolcanoDungeon` e `IslandFarmCave`.
 
+## Spec S5: apariencia del granjero (`FarmerRenderer`)
+
+Fuente: `Farmer..ctor`, `GetDisplayShirt`, `GetShirtColor`, `IsOverridingPants`, `GetPantsColor`, `FarmerRenderer.executeRecolorActions`, `_GeneratePixelIndices`, `_SwapColor`, `ApplySkinColor`, `ApplyEyeColor`, `ApplyShoeColor`, `ApplySleeveColor`, `changeBrightness`, `draw` y `drawHairAndAccesories`.
+
+**Apariencia por defecto de un granjero nuevo:** hombre, piel 0, pelo 0 de color (193,90,50), ojos (122,68,52), camisa `1000`, pantalón `0` de color (46,85,183), zapatos `2`, sin accesorio, barba ni sombrero. Si `shirt` o `pants` no son `"-1"`, se dibuja esa prenda de `Data/Shirts` o `Data/Pants`. El color de la camisa es su `DefaultColor`, o blanco si no tiene; el del pantalón es `pantsColor`.
+
+**Recoloreo de la textura base.** Se trabaja sobre una copia de `farmer_base` (`farmer_girl_base` si es mujer). Los colores de referencia son píxeles de esa textura con índice lineal `i` (`x = i mod ancho`, `y = ⌊i/ancho⌋`): todos los píxeles de la textura con exactamente ese color (RGBA) se reemplazan.
+- **Ojos:** 276 ← ojos y 277 ← `changeBrightness(ojos, −75)`. Si quedan iguales, a 277 se le suma 10 al azul. `changeBrightness` suma el valor a R y G, y a B le suma `valor·8/7` si es negativo, todo acotado entre 0 y 255.
+- **Piel:** 260/261/262 ← los 3 píxeles de la fila `skin` de `skinColors` (3×24). Si `skin < 0` se usa la última fila; si se pasa del máximo, la 0.
+- **Zapatos:** 268–271 ← los 4 píxeles de la fila `shoes` de `shoeColors` (4×19), acotada a la última; si no es un número, se usa la 12.
+- **Mangas:** 256/257/258. Si la camisa tiene mangas, con `s` = índice del sprite de la camisa y `W` = ancho de `shirts`, la base es `⌊s·8/128⌋·32·W + (s·8 mod 128) + 4W`. La muestra `k` (0, 1, 2) es el píxel `base + 128 − k·W` (mitad teñible) multiplicado por el color de la camisa. Si ese píxel no es opaco, se usa `base − k·W` sin teñir, y desde ahí el tinte queda en blanco. Si no tiene mangas, se usan los colores de la piel.
+
+**Capas** (todas con la misma posición y origen que el cuerpo; `fx` y `fy` son `featureX/YOffsetPerFrame[frame]`; las posiciones son relativas a la esquina del sprite del cuerpo, en píxeles de textura):
+
+| Orden | Capa | Origen | Posición |
+|---|---|---|---|
+| 2 | Cuerpo | textura recoloreada, rectángulo del frame | (0,0) |
+| 3 | Pantalón | `pants`, rectángulo del frame + `((p mod 10)·192, ⌊p/10⌋·688)` (+96 si es mujer), teñido con `pantsColor` | (0,0) |
+| 6 | Camisa | `shirts (s·8 mod 128 , ⌊s·8/128⌋·32 + off, 8, 8)`, con `off` = abajo 0 / derecha 8 / izquierda 16 / arriba 24, en blanco | (4+fx, 14+fy) |
+| 6′ | Camisa (tinte) | el mismo rectángulo +128 en X, teñido con el color de la camisa | (4+fx, 14+fy) |
+| 8 o 14 | Brazos | textura recoloreada, rectángulo del frame + 96 px. Van en la capa 8 si mira arriba, 14 si no | (0,0) |
+| 10 | Pelo | `hairstyles (h·16 mod 128, ⌊h·16/128⌋·96 + off, 16, 32)`, con `off` = abajo 0 / derecha 32 / izquierda 32 espejado (96 si tiene sprite izquierdo propio) / arriba 64, teñido con el color de pelo | (fx, fy+1+aj), con `aj = −1` si es hombre con pelo ≥ 16, `+1` si es mujer con pelo < 16, y 0 en otro caso |
+
+La camisa no se espeja (tiene sprite izquierdo propio). El pelo se espeja a la izquierda. El cuerpo y los brazos se espejan según el frame.
+
+Pendiente: parpadeo de ojos, accesorios y barba (capa 7 u 11), sombreros, estilos de pelo con `HairData`, ropa prismática y traje de baño.
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:
