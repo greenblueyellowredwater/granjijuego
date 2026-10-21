@@ -1,5 +1,6 @@
 import type { Entity, SeasonName } from "./terrain.ts";
 import { DEFAULT_APPEARANCE, type Appearance } from "./farmer-appearance.ts";
+import { startingInventory, type Item } from "./items.ts";
 
 const STORAGE_KEY = "stardew-ts/partida";
 const VERSION = 1;
@@ -14,6 +15,8 @@ export interface GameState {
   money: number;
   weather: string;
   weatherForTomorrow: string;
+  inventory: (Item | null)[];
+  currentToolIndex: number;
   appearance?: Appearance;
   locations: Record<string, { entities: Entity[] }>;
 }
@@ -29,6 +32,8 @@ export function newGameState(random = Math.random): GameState {
     money: 500,
     weather: "Sun",
     weatherForTomorrow: "Sun",
+    inventory: startingInventory(),
+    currentToolIndex: 0,
     appearance: DEFAULT_APPEARANCE,
     locations: {},
   };
@@ -42,6 +47,8 @@ export function withDefaults(state: GameState): GameState {
     money: state.money ?? 500,
     weather: state.weather ?? "Sun",
     weatherForTomorrow: state.weatherForTomorrow ?? "Sun",
+    inventory: state.inventory ?? startingInventory(),
+    currentToolIndex: state.currentToolIndex ?? 0,
   };
 }
 

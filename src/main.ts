@@ -6,6 +6,7 @@ import type { TerrainData } from "./world/terrain.ts";
 import { localStore } from "./world/state.ts";
 import { GameClock } from "./world/clock.ts";
 import type { WeatherData } from "./world/weather.ts";
+import type { ItemData } from "./world/items.ts";
 import type { ClothingData } from "./world/farmer-appearance.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -66,7 +67,7 @@ async function boot() {
   }
 
   const load = async (key: string) => (await fetch(contentUrl(key, "json"))).json();
-  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon, contexts, festivalDates, passiveFestivals, calendar] = (await Promise.all([
+  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon, contexts, festivalDates, passiveFestivals, calendar, tools, weapons] = (await Promise.all([
     load("Data/Locations"),
     load("Data/WildTrees"),
     load("Data/Objects"),
@@ -80,6 +81,8 @@ async function boot() {
     load("Data/Festivals/FestivalDates"),
     load("Data/PassiveFestivals"),
     load("generated/calendar").catch(() => ({ greenRainDays: [] })),
+    load("Data/Tools"),
+    load("Data/Weapons"),
   ])) as [
     LocationsData,
     TerrainData["wildTrees"],
@@ -94,6 +97,8 @@ async function boot() {
     Record<string, string>,
     WeatherData["passiveFestivals"],
     { greenRainDays: number[] },
+    ItemData["tools"],
+    ItemData["weapons"],
   ];
   const terrain: TerrainData = {
     wildTrees,
@@ -136,6 +141,12 @@ async function boot() {
     text,
     weather: { conditions: contexts.Default?.WeatherConditions ?? [], festivalDates, passiveFestivals },
     greenRainDays: calendar.greenRainDays ?? [],
+    items: {
+      tools,
+      weapons,
+      objects: objects as ItemData["objects"],
+      textureWidths: Object.fromEntries(Object.entries(manifest.textures).map(([k, v]) => [k, v.width])),
+    },
     locations,
     start: { location: map, x: x === null ? undefined : +x, y: y === null ? undefined : +y },
     terrain,

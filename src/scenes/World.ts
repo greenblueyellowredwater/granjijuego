@@ -12,10 +12,12 @@ import { DEFAULT_APPEARANCE, type ClothingData } from "../world/farmer-appearanc
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
 import { dayTileGlows, locationLights, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
 import { LightingOverlay } from "../render/lighting.ts";
-import { DIALOGUE_FONT, Hud, type HudStrings } from "../render/hud.ts";
+import { DIALOGUE_FONT, Hud, HUD_DEPTH, type HudStrings } from "../render/hud.ts";
 import { QuestionBox } from "../render/question.ts";
 import type { SpriteFontData } from "../render/spritefont.ts";
 import { RAIN_TEXTURE, WeatherRenderer } from "../render/weather.ts";
+import { MENU_TEXTURE, TINY_FONT, ToolbarRenderer, toolbarLayout } from "../render/toolbar.ts";
+import type { ItemData } from "../world/items.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
 import { daySaveRandom, type GsqState } from "../world/gsq.ts";
 import {
@@ -56,6 +58,8 @@ const FARMER_TABLES = "generated/farmer";
 const MAX_TICKS_PER_FRAME = 8;
 const TICK_REAL_MS = 1000 / TICKS_PER_SECOND;
 const FONT_DATA = "Fonts/SpriteFont1.spritefont";
+const TINY_FONT_DATA = "Fonts/tinyFont.spritefont";
+const SLOT_KEYS = ["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "ZERO", "MINUS", "PLUS"];
 const FARMHOUSE = "FarmHouse";
 const STARTER_BED = { x: 9, y: 8, itemId: "2048" };
 
@@ -89,6 +93,7 @@ export interface WorldData {
   text: WorldText;
   weather: WeatherData;
   greenRainDays: number[];
+  items: ItemData;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
 }
@@ -141,6 +146,7 @@ export class World extends Phaser.Scene {
   private lastTile = { x: -1, y: -1 };
   private endingDay = false;
   private weatherFx: WeatherRenderer | null = null;
+  private toolbar: ToolbarRenderer | null = null;
 
   constructor() {
     super("World");
@@ -194,7 +200,7 @@ export class World extends Phaser.Scene {
     }
     if (!this.textures.exists(SHADOW_TEXTURE)) this.load.image(SHADOW_TEXTURE, contentUrl(SHADOW_TEXTURE, "png"));
     if (!this.cache.json.exists(FARMER_TABLES)) this.load.json(FARMER_TABLES, contentUrl(FARMER_TABLES, "json"));
-    if (!this.cache.json.exists(FONT_DATA)) this.load.json(FONT_DATA, contentUrl(FONT_DATA, "json"));
+    for (const f of [FONT_DATA, TINY_FONT_DATA]) if (!this.cache.json.exists(f)) this.load.json(f, contentUrl(f, "json"));
     const textures = new Set([
       "LooseSprites/Cursors",
       "LooseSprites/Cursors_1_6",
@@ -204,6 +210,10 @@ export class World extends Phaser.Scene {
       "TileSheets/furniture",
       RAIN_TEXTURE,
       DIALOGUE_FONT,
+      TINY_FONT,
+      MENU_TEXTURE,
+      "TileSheets/tools",
+      "TileSheets/weapons",
       ...LightingOverlay.textureKeys(),
     ]);
     for (const info of Object.values(this.params.terrain.wildTrees)) {
@@ -356,6 +366,7 @@ export class World extends Phaser.Scene {
     const fontData = this.cache.json.get(FONT_DATA) as SpriteFontData | undefined;
     this.overlay = new LightingOverlay(this);
     this.weatherFx = new WeatherRenderer(this);
+    this.toolbar = new ToolbarRenderer(this, HUD_DEPTH - 5, this.cache.json.get(TINY_FONT_DATA) as SpriteFontData | undefined);
     this.hud = fontData ? new Hud(this, fontData, this.params.text) : null;
     this.question = fontData ? new QuestionBox(this, fontData) : null;
 
@@ -366,6 +377,8 @@ export class World extends Phaser.Scene {
     kb.on("keydown-ENTER", () => this.question?.confirm());
     kb.on("keydown-SPACE", () => this.question?.confirm());
     kb.on("keydown-ESC", () => this.question?.cancel());
+    SLOT_KEYS.forEach((k, i) => kb.on(`keydown-${k}`, () => this.selectSlot(i)));
+    this.input.on("wheel", (_p: unknown, _o: unknown, _dx: number, dy: number) => this.selectSlot((this.params.state.currentToolIndex + (dy > 0 ? 1 : -1) + 12) % 12));
     for (const k of ["UP", "W"]) kb.on(`keydown-${k}`, () => this.question?.move(-1));
     for (const k of ["DOWN", "S"]) kb.on(`keydown-${k}`, () => this.question?.move(1));
     this.input.mouse?.disableContextMenu();
@@ -373,6 +386,11 @@ export class World extends Phaser.Scene {
       if (this.question?.open) {
         const i = this.question.optionAt(p.x, p.y);
         if (i >= 0) this.question.confirm(i);
+        return;
+      }
+      const slot = this.toolbar?.slotAt(this.toolbarLayout(), p.x, p.y) ?? -1;
+      if (slot >= 0) {
+        this.selectSlot(slot);
         return;
       }
       if (p.rightButtonDown()) this.interact();
@@ -396,6 +414,16 @@ export class World extends Phaser.Scene {
     if (k.RIGHT.isDown || k.D.isDown) set.add(Facing.Right);
     if (k.LEFT.isDown || k.A.isDown) set.add(Facing.Left);
     return set;
+  }
+
+  private selectSlot(index: number) {
+    if (this.question?.open || this.endingDay) return;
+    this.params.state.currentToolIndex = index;
+  }
+
+  private toolbarLayout() {
+    const cam = this.cameras.main;
+    return toolbarLayout(cam.width, cam.height, this.body.y - cam.scrollY, cam.height);
   }
 
   private interact() {
@@ -498,6 +526,7 @@ export class World extends Phaser.Scene {
     this.weatherFx?.draw(flags, this.outdoors, this.cameras.main, time);
     this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: flags.raining }));
     this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
+    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items);
     this.hud?.draw(
       {
         time: clock.time,
