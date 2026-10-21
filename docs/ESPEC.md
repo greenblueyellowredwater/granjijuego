@@ -108,7 +108,7 @@ Cambio de día: `NewDay` → `newDayAfterFade` → clima, `GameLocation.DayUpdat
 | # | Hito | Estado |
 |---|---|---|
 | 1 | Importador + visor de mapas | **hecho** |
-| 2 | Caminar por el pueblo: colisión (`Passable`/Buildings), warps, cámara, sprite del granjero | |
+| 2 | Caminar por el pueblo: colisión (`Passable`/Buildings), warps, cámara, sprite del granjero | **hecho** (spec S2) |
 | 3 | Reloj, días, estaciones, clima, RNG | |
 | 4 | Granja básica: azada, regadera, HoeDirt, cultivos, inventario, shipping | |
 | 5 | GameStateQuery, ItemQuery, tiendas, máquinas | |
@@ -143,6 +143,48 @@ Cambio de día: `NewDay` → `newDayAfterFade` → clima, `GameLocation.DayUpdat
 - Mapas: parser TBIN propio → JSON de Tiled. Las propiedades por tile van en la propiedad de capa `tileProperties` y las animaciones en `animations`. Las `@TileIndex@N@Prop` de cada tilesheet pasan a `tiles[].properties`.
 - Orden de dibujo: `Back`, `BackN`, `Buildings`, `BuildingsN`, `Front`, `FrontN`, `AlwaysFront`, `AlwaysFrontN`. `Paths` no se dibuja.
 - Pendiente: audio XACT (`.xwb`/`.xsb`/`.xgs`) y efectos (`.mgfxo`).
+
+## Spec S2: movimiento, colisión y warps
+
+Fuente: literales, llamadas y constantes de `GameLocation.isCollidingPosition` (y sus lambdas), `isTilePassable`, `isTileLocationOpen`, `isWaterTile`, `updateWarps`, `performTouchAction`, `performAction`, `Farmer.GetBoundingBox`, `Farmer.getMovementSpeed` y `Farmer.setRunning`. Los marcados (?) son inferencias a validar contra el juego real.
+
+**Unidades.** El mundo se mide en píxeles de juego: 64 por tile, que es el tile de 16 px del asset dibujado ×4. La posición de un personaje es la esquina superior izquierda de su tile de pies.
+
+**Caja de colisión del granjero.** 48 × 32 px, desplazada 8 px a la derecha de la posición y 16 px hacia abajo (?). Es decir, ocupa la mitad inferior del tile y deja 8 px de margen a cada lado.
+
+**Velocidad.** Corriendo, 5 px de mundo por tick de 1/60 s; caminando, 2. En diagonal cada eje se multiplica por ≈0,707. El desplazamiento se escala por el tiempo real transcurrido.
+
+**Prueba de colisión.** Se testean las esquinas de la caja contra la grilla de tiles. Un tile **bloquea al granjero** si se cumple alguna de estas condiciones:
+1. Está fuera del mapa, salvo que haya un warp en ese tile (los warps de borde usan coordenadas −1 o ancho/alto).
+2. No hay tile en `Back` (vacío de interiores) (?).
+3. El tile de `Back` tiene la propiedad `Passable`, del tile o de su índice en el tilesheet. Lo que importa es que exista, no su valor; en los datos es casi siempre `F`.
+4. El tile de `Back` tiene `Water` (salvo nadando).
+5. Hay un tile en `Buildings` que no tiene `Passable` ni `Shadow`. Un tile de `Buildings` con `Action` no es atravesable para el granjero.
+
+`NPCBarrier`, `TemporaryBarrier`, `NPCPassable` y `ProjectilePassable` solo afectan a NPCs y proyectiles. Los objetos, terrain features, muebles, edificios y otros personajes colisionan con sus propias cajas, lo que queda para hitos posteriores.
+
+Movimiento: cada eje se resuelve por separado. Si el paso en X choca se cancela X y se intenta Y, y viceversa, así el granjero se desliza por las paredes.
+
+**Warps.** La propiedad de mapa `Warp` es una lista de grupos de 5 campos `desdeX desdeY destino haciaX haciaY`. Los grupos inválidos se ignoran con una advertencia. `NPCWarp` usa el mismo formato y solo aplica a NPCs. El granjero se transporta cuando el tile que contiene el centro de su caja coincide con el origen de un warp (incluidos los de fuera del mapa).
+
+**Acciones al interactuar** (tecla de acción sobre el tile enfrente, propiedad `Action` en `Buildings`):
+- `Warp x y Destino`: transporta.
+- `LockedDoorWarp x y Destino apertura cierre`: igual que `Warp`, pero solo entre las horas indicadas (formato 900/2100). Sin reloj se considera abierta.
+- `Door Npc…`: puerta de cuarto de NPC (requiere amistad; pendiente).
+- Hay más de 100 acciones más (`Mailbox`, `Message`, `Garbage`, tiendas…) que se especifican por hito.
+
+**Acciones al pisar** (`TouchAction` en `Back`): `Warp`, `MagicWarp`, `Door`, `Sleep`, `Emote`… (pendiente).
+
+**Resolución de mapas.** `Data/Locations[nombre].CreateOnLoad.MapPath`, y si no existe, `Maps/<nombre>`.
+
+**Sprite base del granjero** (`Characters/Farmer/farmer_base`, observado del asset): frames de 16 × 32 en filas de 18 columnas. Las filas 0, 1 y 2 son abajo, derecha y arriba, con quieto en la columna 0 y pasos en las columnas 1 y 2. Los brazos están en la misma fila, 6 columnas a la derecha. La izquierda es la derecha espejada (?). Capas (pantalón, camisa, pelo, accesorios) y recoloreo de piel: spec `FarmerRenderer` pendiente.
+
+## Hito 2: resultados (2026-10-21)
+
+- Simulación pura en `src/world/` (`Location`, `step`), testeada sin Phaser, más recorridos de punta a punta con puppeteer (`npm run e2e`): puerta de Pierre ida y vuelta, borde oeste de Town → BusStop y paredes.
+- Aproximaciones a validar contra el juego real: offset vertical de la caja (16 px), duración de los frames de caminata (90 ms corriendo y 150 ms caminando) y que la izquierda sea la derecha espejada.
+- `LockedDoorWarp` ignora el horario hasta que exista el reloj (hito 3). `Door`, `TouchAction` y el resto de las acciones solo se informan en el HUD.
+- El granjero se dibuja solo con cuerpo y brazos base; falta la spec `FarmerRenderer` (ropa, pelo, piel).
 
 ## Incógnitas
 

@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("phaser", () => ({ default: { Scene: class {} } }));
 
-const { drawOrder } = await import("../src/scenes/MapViewer.ts");
+const { drawOrder } = await import("../src/render/tilemap.ts");
 const { seasonalTexture } = await import("../src/content.ts");
 
 describe("drawOrder", () => {

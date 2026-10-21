@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { GeneratedSchemes } from "../tools/clr/gamedata-schemes.ts";
 import { generateGameDataSchemes } from "../tools/clr/gamedata-schemes.ts";
 import { decompressXnb } from "../tools/lzx.ts";
 import { configureXnb, readXnb } from "../tools/xnb.ts";
@@ -9,7 +10,10 @@ const dir = process.env.STARDEW_DIR;
 const available = !!dir && existsSync(join(dir, "StardewValley.GameData.dll"));
 
 describe.skipIf(!available)("contra la instalación real (STARDEW_DIR)", () => {
-  const schemes = generateGameDataSchemes(join(dir!, "StardewValley.GameData.dll"));
+  let schemes: GeneratedSchemes;
+  beforeAll(() => {
+    schemes = generateGameDataSchemes(join(dir!, "StardewValley.GameData.dll"));
+  });
 
   it("genera esquemas para los modelos de datos principales", () => {
     expect(schemes.schemes["StardewValley.GameData.Crops.CropData"]).toMatchObject({ RegrowDays: "Int32", $HarvestItemId: "String" });

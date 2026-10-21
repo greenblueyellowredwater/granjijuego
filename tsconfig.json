@@ -8,7 +8,7 @@
     "allowImportingTsExtensions": true,
     "skipLibCheck": true,
     "types": ["node", "vite/client"],
-    "lib": ["ES2023", "DOM"]
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
   },
   "include": ["src", "tools", "test"]
 }
