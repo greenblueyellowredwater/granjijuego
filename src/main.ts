@@ -4,6 +4,7 @@ import { MapViewer } from "./scenes/MapViewer.ts";
 import { World, type LocationsData } from "./scenes/World.ts";
 import type { TerrainData } from "./world/terrain.ts";
 import { localStore } from "./world/state.ts";
+import { GameClock } from "./world/clock.ts";
 import type { ClothingData } from "./world/farmer-appearance.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -64,14 +65,43 @@ async function boot() {
   }
 
   const load = async (key: string) => (await fetch(contentUrl(key, "json"))).json();
-  const [locations, wildTrees, objects, shirts, pants] = (await Promise.all([
+  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon] = (await Promise.all([
     load("Data/Locations"),
     load("Data/WildTrees"),
     load("Data/Objects"),
     load("Data/Shirts"),
     load("Data/Pants"),
-  ])) as [LocationsData, TerrainData["wildTrees"], TerrainData["objects"], ClothingData["shirts"], ClothingData["pants"]];
-  const terrain: TerrainData = { wildTrees, objects, bushTextureWidth: manifest.textures["TileSheets/bushes"]?.width ?? 128 };
+    load("Data/Furniture"),
+    load("Strings/StringsFromCSFiles"),
+    load("Strings/Locations"),
+    load("Strings/Lexicon"),
+  ])) as [
+    LocationsData,
+    TerrainData["wildTrees"],
+    TerrainData["objects"],
+    ClothingData["shirts"],
+    ClothingData["pants"],
+    Record<string, string>,
+    Record<string, string>,
+    Record<string, string>,
+    Record<string, string>,
+  ];
+  const terrain: TerrainData = {
+    wildTrees,
+    objects,
+    bushTextureWidth: manifest.textures["TileSheets/bushes"]?.width ?? 128,
+    furniture,
+    furnitureTextureWidth: manifest.textures["TileSheets/furniture"]?.width ?? 512,
+  };
+  const text = {
+    shortDays: [3042, 3043, 3044, 3045, 3046, 3047, 3048].map((n) => csStrings[`Game1.cs.${n}`] ?? ""),
+    am: csStrings["DayTimeMoneyBox.cs.10370"] ?? "am",
+    pm: csStrings["DayTimeMoneyBox.cs.10371"] ?? "pm",
+    late: csStrings["Game1.cs.2652"] ?? "",
+    sleepQuestion: locationStrings["FarmHouse_Bed_GoToSleep"] ?? "",
+    yes: lexicon["QuestionDialogue_Yes"] ?? "Yes",
+    no: lexicon["QuestionDialogue_No"] ?? "No",
+  };
   $("status").textContent = `Stardew Valley ${manifest.gameVersion} · ?mode=viewer para el visor de mapas`;
   const store = localStore();
   const state = store.load();
@@ -83,9 +113,16 @@ async function boot() {
     location.reload();
   };
   const x = params.get("x"), y = params.get("y");
+  const seasonOverride = params.get("season");
+  if (seasonOverride && SEASONS.includes(seasonOverride as Season)) state.season = seasonOverride as Season;
+  $<HTMLSelectElement>("season").value = state.season;
+  const time = Number(params.get("time"));
+  const clock = new GameClock(Number.isInteger(time) && time >= 600 && time <= 2600 ? time : 600);
   game.scene.add("World", World, true, {
     manifest,
-    season,
+    season: state.season,
+    clock,
+    text,
     locations,
     start: { location: map, x: x === null ? undefined : +x, y: y === null ? undefined : +y },
     terrain,

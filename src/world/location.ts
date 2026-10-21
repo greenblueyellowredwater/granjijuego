@@ -117,6 +117,17 @@ export class Location {
     return l.layer.data[y * l.layer.width + x] ?? 0;
   }
 
+  setTileIndex(layer: string, x: number, y: number, index: number) {
+    const l = this.layers.get(layer);
+    const gid = this.tile(layer, x, y);
+    if (!l || !gid) return null;
+    const ts = this.map.tilesets.filter((t) => t.firstgid <= gid).sort((a, b) => b.firstgid - a.firstgid)[0];
+    if (!ts) return null;
+    const next = ts.firstgid + index;
+    l.layer.data[y * l.layer.width + x] = next;
+    return next;
+  }
+
   tileProps(layer: string, x: number, y: number): Props | null {
     const gid = this.tile(layer, x, y);
     if (!gid) return null;

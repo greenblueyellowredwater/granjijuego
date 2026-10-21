@@ -98,6 +98,23 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
+    "duerme en la cama y despierta al día siguiente",
+    async (page) => {
+      await page.goto(`${BASE}/?map=FarmHouse&x=5&y=9&time=2200`);
+      await waitStatus(page, /FarmHouse .* tile 5,9/);
+      const before = await page.evaluate(() => JSON.parse(localStorage.getItem("stardew-ts/partida") ?? "null"));
+      await holdUntil(page, "d", /Pregunta abierta/);
+      await settle();
+      await page.screenshot({ path: `${OUT}/sleep-question.png` });
+      await page.keyboard.press("Enter");
+      await waitStatus(page, /FarmHouse .* tile 9,9[\s\S]*6:00 am/);
+      const after = await page.evaluate(() => JSON.parse(localStorage.getItem("stardew-ts/partida") ?? "null"));
+      if (after.daysPlayed !== before.daysPlayed + 1) throw new Error(`daysPlayed ${before.daysPlayed} → ${after.daysPlayed}`);
+      await settle();
+      await page.screenshot({ path: `${OUT}/wake-up.png` });
+    },
+  ],
+  [
     "no atraviesa paredes",
     async (page) => {
       await page.goto(`${BASE}/?map=SeedShop&x=6&y=27`);

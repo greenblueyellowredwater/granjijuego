@@ -73,6 +73,7 @@ export class RenderedMap {
   readonly data: TiledMap;
   readonly belowBuildingsDepth = DEPTH.shadows;
   private readonly animated: AnimatedCell[] = [];
+  private readonly sortedImages = new Map<string, Phaser.GameObjects.Image>();
   private readonly tilesets: Phaser.Tilemaps.Tileset[];
 
   constructor(
@@ -150,6 +151,7 @@ export class RenderedMap {
         .setOrigin(0, 0)
         .setScale(this.scale)
         .setDepth(this.spriteDepth(frontTileDepth(y, sublayer, count, tileheight * this.scale)));
+      this.sortedImages.set(`${name}:${x},${y}`, image);
       const anim = anims.get(`${x},${y}`);
       if (anim) {
         this.animated.push({
@@ -162,6 +164,16 @@ export class RenderedMap {
         });
       }
     });
+  }
+
+  setTile(layerName: string, x: number, y: number, gid: number) {
+    const image = this.sortedImages.get(`${layerName}:${x},${y}`);
+    if (image) {
+      const f = this.tileFrame(gid);
+      if (f) image.setTexture(f.key, f.frame);
+      return;
+    }
+    this.layers.find((l) => l.layer.name === layerName)?.putTileAt(gid, x, y, false);
   }
 
   spriteDepth(layerDepth: number) {

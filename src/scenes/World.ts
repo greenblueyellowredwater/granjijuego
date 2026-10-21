@@ -9,14 +9,25 @@ import { buildWaterGrid, WATER_TEXTURE, waterColor, waterPieces, WaterState, typ
 import { DEPTH } from "../render/tilemap.ts";
 import { FarmerSprite, farmerTextureKeys } from "../render/farmer.ts";
 import { DEFAULT_APPEARANCE, type ClothingData } from "../world/farmer-appearance.ts";
+import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
+import { dayTileGlows, locationLights, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
+import { LightingOverlay } from "../render/lighting.ts";
+import { DIALOGUE_FONT, Hud, type HudStrings } from "../render/hud.ts";
+import { QuestionBox } from "../render/question.ts";
+import type { SpriteFontData } from "../render/spritefont.ts";
 import {
+  bedSleepTile,
+  bedBox,
+  bedTileOffset,
   drawOps,
   generateLocationObjects,
-  solidRect,
+  solidRects,
+  wakeUpPosition,
   stepTreeAlpha,
   treeFadeRect,
   treeTexture,
   type DrawOp,
+  type Entity,
   type GrassContext,
   type TerrainData,
 } from "../world/terrain.ts";
@@ -41,6 +52,9 @@ const SHADOW_TEXTURE = "LooseSprites/shadow";
 const FARMER_TABLES = "generated/farmer";
 const MAX_TICKS_PER_FRAME = 8;
 const TICK_REAL_MS = 1000 / TICKS_PER_SECOND;
+const FONT_DATA = "Fonts/SpriteFont1.spritefont";
+const FARMHOUSE = "FarmHouse";
+const STARTER_BED = { x: 9, y: 8, itemId: "2048" };
 
 export type LocationsData = Record<string, { CreateOnLoad?: { MapPath?: string | null } | null }>;
 
@@ -49,6 +63,14 @@ export interface WorldStart {
   x?: number;
   y?: number;
   facing?: Facing;
+  wakeUp?: boolean;
+}
+
+export interface WorldText extends HudStrings {
+  sleepQuestion: string;
+  yes: string;
+  no: string;
+  late: string;
 }
 
 export interface WorldData {
@@ -60,6 +82,8 @@ export interface WorldData {
   clothing: ClothingData;
   state: GameState;
   store: StateStore;
+  clock: GameClock;
+  text: WorldText;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
 }
@@ -102,6 +126,15 @@ export class World extends Phaser.Scene {
   private fadingTrees: { rect: Rect; alpha: number; images: Phaser.GameObjects.Image[] }[] = [];
   private water: { grid: WaterGrid; state: WaterState; tint: number; alpha: number; pool: Phaser.GameObjects.Image[] } | null = null;
   private ticks = 0;
+  private lightSources: LightSource[] = [];
+  private overlay: LightingOverlay | null = null;
+  private hud: Hud | null = null;
+  private question: QuestionBox | null = null;
+  private bed: Extract<Entity, { kind: "bed" }> | null = null;
+  private bedOffset = 1;
+  private hasMoved = false;
+  private lastTile = { x: -1, y: -1 };
+  private endingDay = false;
 
   constructor() {
     super("World");
@@ -121,6 +154,20 @@ export class World extends Phaser.Scene {
     this.fadingTrees = [];
     this.water = null;
     this.ticks = 0;
+    this.lightSources = [];
+    this.bed = null;
+    this.bedOffset = 1;
+    this.hasMoved = false;
+    this.lastTile = { x: -1, y: -1 };
+    this.endingDay = false;
+  }
+
+  private get outdoors() {
+    return String(this.location.props.Outdoors ?? "").toUpperCase().startsWith("T");
+  }
+
+  private get lightingContext(): LightingContext {
+    return { season: this.params.state.season, outdoors: this.outdoors, raining: false };
   }
 
   preload() {
@@ -131,12 +178,25 @@ export class World extends Phaser.Scene {
     }
     if (!this.textures.exists(SHADOW_TEXTURE)) this.load.image(SHADOW_TEXTURE, contentUrl(SHADOW_TEXTURE, "png"));
     if (!this.cache.json.exists(FARMER_TABLES)) this.load.json(FARMER_TABLES, contentUrl(FARMER_TABLES, "json"));
-    const textures = new Set(["LooseSprites/Cursors", "LooseSprites/Cursors_1_6", "Maps/springobjects", "TileSheets/bushes", "TerrainFeatures/grass"]);
+    if (!this.cache.json.exists(FONT_DATA)) this.load.json(FONT_DATA, contentUrl(FONT_DATA, "json"));
+    const textures = new Set([
+      "LooseSprites/Cursors",
+      "LooseSprites/Cursors_1_6",
+      "Maps/springobjects",
+      "TileSheets/bushes",
+      "TerrainFeatures/grass",
+      "TileSheets/furniture",
+      DIALOGUE_FONT,
+      ...LightingOverlay.textureKeys(),
+    ]);
     for (const info of Object.values(this.params.terrain.wildTrees)) {
       const t = treeTexture(info, this.params.season);
       if (t) textures.add(t);
     }
-    for (const t of textures) if (!this.textures.exists(t) && t in this.params.manifest.textures) this.load.image(t, contentUrl(t, "png"));
+    const { manifest } = this.params;
+    for (const t of textures) {
+      if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
+    }
   }
 
   private spawnTerrain() {
@@ -144,12 +204,18 @@ export class World extends Phaser.Scene {
     const { entities, created } = locationEntities(state, this.location.name, () =>
       generateLocationObjects(this.location, state.season, new DotNetRandom(Math.floor(Math.random() * 2147483647))),
     );
-    if (created) store.save(state);
-    this.location.setSolids(entities.map(solidRect).filter((r) => r !== null));
+    let changed = created;
+    if (this.location.name === FARMHOUSE && !entities.some((e) => e.kind === "bed")) {
+      entities.push({ kind: "bed", ...STARTER_BED });
+      changed = true;
+    }
+    if (changed) store.save(state);
+    this.bed = (entities.find((e) => e.kind === "bed") as Extract<Entity, { kind: "bed" }> | undefined) ?? null;
+    this.location.setSolids(entities.flatMap((e) => solidRects(e, this.params.terrain)));
     const grass: GrassContext = {
       uniqueId: state.uniqueId,
       daysPlayed: state.daysPlayed,
-      outdoors: String(this.location.props.Outdoors ?? "").toUpperCase().startsWith("T"),
+      outdoors: this.outdoors,
       hasFrontTile: (x, y) => this.location.tile("Front", x, y) !== 0,
     };
     for (const e of entities) {
@@ -160,6 +226,28 @@ export class World extends Phaser.Scene {
       const rect = e.kind === "tree" ? treeFadeRect(e) : null;
       if (rect && images.length) this.fadingTrees.push({ rect, alpha: 1, images });
     }
+  }
+
+  private applyTiles(property: string) {
+    const changes = tileChanges(this.location.props[property]);
+    for (const c of changes) {
+      const gid = this.location.setTileIndex(c.layer, c.x, c.y, c.index);
+      if (gid !== null) this.rendered.setTile(c.layer, c.x, c.y, gid);
+    }
+    return changes;
+  }
+
+  private setupLights() {
+    const { time } = this.params.clock;
+    const turnOff = isTimeToTurnOffLighting(time, this.lightingContext);
+    let glows: { x: number; y: number }[] = [];
+    if (!this.outdoors && !turnOff) glows = dayTileGlows(this.applyTiles("DayTiles"));
+    if (turnOff) {
+      this.applyTiles("NightTiles");
+      if (this.location.name === "MineShaft" || this.location.name === "Woods") glows = dayTileGlows(tileChanges(this.location.props.DayTiles));
+      else glows = [];
+    }
+    this.lightSources = locationLights(this.location.name, this.location.props, glows, { turnOff, raining: false });
   }
 
   private setupWater() {
@@ -227,10 +315,16 @@ export class World extends Phaser.Scene {
     this.featureXOffset = this.cache.json.get(FARMER_TABLES)?.featureXOffsetPerFrame ?? [];
     this.spawnTerrain();
     this.setupWater();
+    this.setupLights();
 
     const spawn = this.spawnTile(start);
     const pos = positionForTile(spawn.x, spawn.y);
     this.body = { x: pos.x, y: pos.y, facing: start.facing ?? Facing.Down };
+    if (start.wakeUp && this.bed) {
+      const wake = wakeUpPosition(this.bed, (x, y) => !collides(this.location, x * TILE, y * TILE + 16));
+      this.body = { x: wake.x, y: wake.y, facing: wake.facing === "right" ? Facing.Right : Facing.Left };
+    }
+    this.lastTile = centerTile(this.body);
     this.params.onEnter?.(start.location, spawn);
 
     this.shadow = this.add.image(0, 0, SHADOW_TEXTURE);
@@ -241,12 +335,29 @@ export class World extends Phaser.Scene {
     this.placeSprites();
     this.updateCamera();
 
+    const fontData = this.cache.json.get(FONT_DATA) as SpriteFontData | undefined;
+    this.overlay = new LightingOverlay(this);
+    this.hud = fontData ? new Hud(this, fontData, this.params.text) : null;
+    this.question = fontData ? new QuestionBox(this, fontData) : null;
+
     const kb = this.input.keyboard!;
     this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,X,E") as Record<string, Phaser.Input.Keyboard.Key>;
     kb.on("keydown-X", () => this.interact());
     kb.on("keydown-E", () => this.interact());
+    kb.on("keydown-ENTER", () => this.question?.confirm());
+    kb.on("keydown-SPACE", () => this.question?.confirm());
+    kb.on("keydown-ESC", () => this.question?.cancel());
+    for (const k of ["UP", "W"]) kb.on(`keydown-${k}`, () => this.question?.move(-1));
+    for (const k of ["DOWN", "S"]) kb.on(`keydown-${k}`, () => this.question?.move(1));
     this.input.mouse?.disableContextMenu();
-    this.input.on("pointerdown", (p: Phaser.Input.Pointer) => p.rightButtonDown() && this.interact());
+    this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (this.question?.open) {
+        const i = this.question.optionAt(p.x, p.y);
+        if (i >= 0) this.question.confirm(i);
+        return;
+      }
+      if (p.rightButtonDown()) this.interact();
+    });
     cam.fadeIn(150, 0, 0, 0);
   }
 
@@ -270,6 +381,10 @@ export class World extends Phaser.Scene {
 
   private interact() {
     if (!this.location || this.warping) return;
+    if (this.question?.open) {
+      this.question.confirm();
+      return;
+    }
     const t = facingTile(this.body);
     const action = this.location.action(t.x, t.y);
     if (!action) return;
@@ -293,15 +408,84 @@ export class World extends Phaser.Scene {
     });
   }
 
+  private get timePasses() {
+    return !this.question?.open && !this.endingDay && !this.warping;
+  }
+
+  private onClockEvents(events: ReturnType<GameClock["tick"]>) {
+    for (const e of events) {
+      if (e.kind === "nightTiles") {
+        this.applyTiles("NightTiles");
+      } else if (e.kind === "late" && e.time === 2400) this.message = this.params.text.late;
+      else if (e.kind === "passOut") this.endDay();
+    }
+  }
+
+  private checkTouchActions() {
+    const tile = centerTile(this.body);
+    if (tile.x === this.lastTile.x && tile.y === this.lastTile.y) return;
+    this.lastTile = tile;
+    if (!this.bed) return;
+    const sleep = bedSleepTile(this.bed, this.bedOffset);
+    if (tile.x !== sleep.x || tile.y !== sleep.y || !this.hasMoved || !this.timePasses || !this.question) return;
+    this.question.ask(this.params.text.sleepQuestion, [this.params.text.yes, this.params.text.no]).then((answer) => {
+      if (answer === 0) this.endDay();
+    });
+  }
+
+  private endDay() {
+    if (this.endingDay) return;
+    this.endingDay = true;
+    const { state, store, clock } = this.params;
+    this.cameras.main.fadeOut(1000, 0, 0, 0);
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      Object.assign(state, nextDay(state));
+      clock.time = 600;
+      clock.interval = 0;
+      clock.shakeMs = 0;
+      store.save(state);
+      this.scene.restart({ ...this.params, season: state.season, start: { location: FARMHOUSE, wakeUp: true } });
+    });
+  }
+
   private simulate() {
     const pressed = this.pressed();
+    if (!this.timePasses) pressed.clear();
+    const before = { x: this.body.x, y: this.body.y };
     this.running = !this.keys.SHIFT.isDown;
     const result = step(this.location, this.body, pressed, this.running, TICK_MS);
     this.animator.tick(this.body.facing, pressed.size > 0, this.running, pressed.size, TICK_MS);
     this.updateTreeFade();
     this.ticks++;
     this.water?.state.tick(TICK_MS, (this.ticks * 1000) / TICKS_PER_SECOND);
+    if (this.body.x !== before.x || this.body.y !== before.y) this.hasMoved = true;
+    if (this.bed) this.bedOffset = bedTileOffset(this.bedOffset, bedBox(this.bed, this.params.terrain), farmerBox(this.body.x, this.body.y), this.body.x);
+    this.onClockEvents(this.params.clock.tick(TICK_MS, this.lightingContext, this.timePasses));
     if (result.warp) this.warpTo(result.warp.target, result.warp.toX, result.warp.toY);
+    else this.checkTouchActions();
+  }
+
+  private drawLightingAndHud(time: number) {
+    const { clock, state } = this.params;
+    const ctx = this.lightingContext;
+    const turnOff = isTimeToTurnOffLighting(clock.time, ctx);
+    this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: false }) || l.fadeOut < 0);
+    this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main);
+    this.hud?.draw(
+      {
+        time: clock.time,
+        interval: clock.interval,
+        dayOfMonth: state.dayOfMonth,
+        seasonIndex: SEASON_ORDER.indexOf(state.season),
+        weatherIcon: weatherIcon({ season: state.season }),
+        money: state.money,
+        shaking: clock.shakeMs > 0,
+        timePasses: this.timePasses,
+        totalMs: time,
+        random: (min, max) => min + Math.floor(Math.random() * (max - min)),
+      },
+      this.cameras.main.width,
+    );
   }
 
   private placeSprites() {
@@ -340,6 +524,7 @@ export class World extends Phaser.Scene {
     this.placeSprites();
     this.updateCamera();
     this.drawWater();
+    this.drawLightingAndHud(time);
 
     const c = centerTile(this.body);
     const f = facingTile(this.body);
@@ -347,6 +532,8 @@ export class World extends Phaser.Scene {
     this.params.onStatus(
       [
         `${this.location.name} (${this.mapPath})  tile ${c.x},${c.y}  pos ${this.body.x.toFixed(2)},${this.body.y.toFixed(2)}`,
+        `${this.params.state.season} ${this.params.state.dayOfMonth}, año ${this.params.state.year} · ${formatTime(this.params.clock.time)}`,
+        this.question?.open ? "Pregunta abierta [Enter = sí, Esc = no]" : "",
         action ? `Enfrente: ${action}  [X/E]` : "",
         this.message,
         "WASD/flechas = mover · Shift = caminar · X/E/clic derecho = interactuar",

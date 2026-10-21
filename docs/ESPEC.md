@@ -116,7 +116,7 @@ Cambio de día: `NewDay` → `newDayAfterFade` → clima, `GameLocation.DayUpdat
 | 1 | Importador + visor de mapas | **hecho** |
 | 2 | Caminar por el pueblo: colisión (`Passable`/Buildings), warps, cámara, sprite del granjero | **hecho** (spec S2) |
 | 2b | Vegetación y objetos de `Paths`, agua animada, orden de dibujo por lotes | **hecho** (specs S3 y S4) |
-| 3 | Reloj, días, estaciones, clima, RNG | |
+| 3 | Reloj, días, estaciones, iluminación, HUD y sueño | **hecho** (spec S6); falta el clima |
 | 4 | Granja básica: azada, regadera, HoeDirt, cultivos, inventario, shipping | |
 | 5 | GameStateQuery, ItemQuery, tiendas, máquinas | |
 | 6 | NPCs: schedules, pathfinding, diálogo, regalos | |
@@ -336,6 +336,83 @@ Fuente: `Farmer..ctor`, `GetDisplayShirt`, `GetShirtColor`, `IsOverridingPants`,
 La camisa no se espeja (tiene sprite izquierdo propio). El pelo se espeja a la izquierda. El cuerpo y los brazos se espejan según el frame.
 
 Pendiente: parpadeo de ojos, accesorios y barba (capa 7 u 11), sombreros, estilos de pelo con `HairData`, ropa prismática y traje de baño.
+
+## Spec S6: reloj, calendario, iluminación y HUD
+
+Fuente: `Game1.UpdateGameClock`, `performTenMinuteClockUpdate` (lambda), `getStartingToGetDarkTime`, `getTrulyDarkTime`, `getModeratelyDarkTime`, `isTimeToTurnOffLighting`, `updateWeatherIcon`, `DrawLighting`, `DrawLightmapOnScreen`, `allocateLightmap`, el constructor de `Game1` (`lightingBlend`), `GameLocation._updateAmbientLighting`, `resetLocalState`, `addLightGlows`, `switchOutNightTiles`, `LightSource` (`.ctor`, `Draw`, `loadTextureFromConstantValue`), `DayTimeMoneyBox` (`draw`, `drawMoneyBox`, `updatePosition`, `.ctor`), `MoneyDial.draw`, `Utility.drawTextWithShadow`, `FarmHouse.AddStarterFurniture`, `GetPlayerBed`, `BedFurniture` (`GetBedSpot`, `DoesTileHaveProperty`, `UpdateBedTile`, `IntersectsForCollision`, `ShiftPositionForBed`) y `GameLocation.performTouchAction` (`Sleep`).
+
+**Reloj.** La hora es un entero `hhmm` que empieza en 600. Mientras el tiempo corre, cada tick suma sus milisegundos enteros (16) a `gameTimeInterval`. Cuando el intervalo supera `7000 + ExtraMillisecondsPerInGameMinute·10` de la location, pasa una actualización de diez minutos:
+- El intervalo vuelve a 0 y la hora suma 10. Si los minutos llegan a 60, se pasa a la hora siguiente (`h·100 + 100`). La hora nunca supera 2600.
+- Si la hora es `trulyDark − 100`, se cambian los tiles nocturnos de la location actual (`NightTiles`).
+- Si no, y la hora es `moderatelyDark` en un exterior sin lluvia, la luz ambiente pasa a blanco. Esta rama nunca se ejecuta, porque `moderatelyDark` siempre es igual a `trulyDark − 100`.
+- A las 2400 el reloj tiembla 2 s y aparece el mensaje «It's getting late...» (`Strings/StringsFromCSFiles:Game1.cs.2652`). A las 2500 vuelve a temblar.
+- A las 2600 el granjero se desmaya y empieza un día nuevo.
+
+**Oscuridad.** `startDark` es 1800 en primavera y verano, 1700 en otoño y 1500 en invierno; en la isla siempre 1800. `trulyDark = startDark + 200` y `moderatelyDark = (startDark + trulyDark)/2`. Las luces de ventana se apagan desde `trulyDark − 100`.
+
+**Luz exterior** (se recalcula cada tick). Sea `t = int(h·100 + (minutos/10)·16,66)`, con la división entera, y `f = intervalo/7000·16,6`:
+- Desde `trulyDark`: `luz = min(0,93; 0,75 + (t − trulyDark + f)·0,000625)`.
+- Desde `startDark`: `luz = min(0,93; 0,3 + (t − startDark + f)·0,00225)`.
+- En ambos casos `outdoorLight = color·luz`, donde el color es `eveningColor` (255,255,0) o la luz ambiente si llueve. Multiplicar un color por un escalar trunca los cuatro canales, alfa incluido.
+- Antes del anochecer, `outdoorLight` es la luz ambiente (×0,3 si llueve).
+
+**Luz ambiente** (`_updateAmbientLighting`, al entrar y en cada actualización):
+- Exterior: blanco, o (255,200,80) si llueve.
+- Interior, desde `startDark` o con `lightLevel > 0`: interpolación de `indoorLightingColor` (100,120,30) a `indoorLightingNightColor` (150,150,30). El factor es `x = 1 − clamp(minutos(ahora → trulyDark)/120, 0, 1)`, con `ahora = hora + ⌊intervalo/(700 + extra)⌋`, y cada canal se trunca a byte.
+- Interior, en otro caso: `indoorLightingColor`.
+
+**Lightmap.** Se dibuja si (exterior y `outdoorLight ≠ blanco`) o `ambientLight ≠ blanco`. Con `q = lightingQuality/2 = 4`, el lightmap mide `⌊(ancho + 64)/q⌋ × ⌊(alto + 64)/q⌋` y se arma así:
+1. Se limpia a transparente y se pinta con mezcla no premultiplicada de un color `C`. `C` es `outdoorLight` si `ambientLight` es blanco o si es un exterior con lluvia, y `ambientLight` en otro caso. Así cada canal guardado vale `C·C.a`.
+2. Cada fuente de luz se dibuja con su textura entera en `posiciónEnPantalla/q`, con origen en su centro, escala `radio/q`, muestreo por punto y color negro por defecto. Con mezcla no premultiplicada el negro deja `destino·(1 − alfa)`: las luces abren huecos en el lightmap.
+3. El lightmap se escala ×q con filtro lineal y se aplica sobre la pantalla con `lightingBlend`: función `ReverseSubtract`, origen `SourceColor` y destino `One`. Resultado: `pantalla − L²` por canal. Va después de `AlwaysFront` y del clima, y antes del HUD. En exteriores con lluvia se agrega encima un velo `OrangeRed·0,45`.
+
+**Fuentes de luz al entrar a una location** (`resetLocalState`):
+- `Light` del mapa: tripletas `x y tipo`, en el centro del tile (`x·64+32, y·64+32`), radio 1 y contexto `MapLight`.
+- Solo si todavía no es hora de apagar las luces y no llueve:
+  - `WindowLight`: tripletas iguales a las de `Light`, con contexto `WindowLight`.
+  - Brillos interiores (`lightGlows`): tipo 6 (`indoorWindowLight`), radio 1 y contexto `WindowLight`.
+- Una luz `WindowLight` que se dibuja con lluvia o pasada la hora de apagar empieza a desvanecerse: el alfa de su color baja 4 por frame y deja de dibujarse en 0.
+- Texturas por tipo: 1 `lantern`, 2 `windowLight`, 4 `sconceLight`, 5 `greenLight` (`cauldronLight`), 6 `indoorWindowLight`, 7 `projectorLight`, 8 `fishTankLight`, 9 `treeLights`, 10 `pinpointLight`, todas en `LooseSprites/Lighting`. El 3 no tiene textura.
+
+**Tiles de día y noche:**
+- `DayTiles` (cuaternas `capa x y índice`) se aplica en interiores al empezar el día, si todavía no es `trulyDark − 100`. Además agrega un brillo en `tile·64 + d`, con `d` según el índice: 256 → (32,64); 257 → (32,−4); 405 → (32,32) y (96,32); 469 → (32,36); 1224 → (32,32).
+- `NightTiles` (mismo formato) se aplica al entrar si ya es `trulyDark − 100` o llueve (salvo `SandyHouse`), y a esa hora en la location actual. Borra los brillos, salvo en `MineShaft` y `Woods`. Los índices 720 y 726 no se aplican si existe la mejora de la casa de Pam.
+
+**Calendario.** Hay 28 días por estación en el orden primavera, verano, otoño e invierno; después de invierno sigue primavera del año siguiente. `dayOfWeek = día mod 7`, con los nombres de `Game1.cs.3042`–`3048`: 0 = Sun, 1 = Mon, …, 6 = Sat. Cada día nuevo suma 1 a `daysPlayed`.
+
+**Ícono de clima:** nieve 7, lluvia 4, viento en primavera 3, en otoño 6 y en invierno 7, boda 0, sol 2, tormenta 5, festival 1, lluvia verde 999.
+
+**HUD (`DayTimeMoneyBox`).** Coordenadas de UI, escala ×4. La posición es `(anchoUI − 300, 8)`. Si el exterior es más chico que la pantalla, se acota a `−viewport.X + anchoMapa·64 − 300`. Todo se dibuja desde `LooseSprites/Cursors`:
+- Caja: `(333,431,71,43)` en la posición.
+- Fecha: `"<díaCorto>. <día>"` en `dialogueFont` (`Fonts/SpriteFont1`) con sombra. Va centrada en `(333·0,5625 − ancho/2, 431·0,1 − alto/2)` respecto de la caja, en color `textColor` (34,17,34).
+- Estación: `(406, 441 + 8·índiceEstación, 12, 8)` en +(212,68). Clima: `(317 + 12·ícono, 421, 12, 8)` en +(116,68); la lluvia verde usa `Cursors_1_6 (243,293,12,8)`.
+- Hora: en inglés, `h mod 12` (0 → «12») + `":"` + minutos (con un «0» extra si son 0) + `" "` + `am`/`pm` (`DayTimeMoneyBox.cs.10370/10371`). Es `am` antes de 1200 y desde 2400. Va centrada en `(333·0,55 − ancho/2, 431·0,31 − alto/2)`.
+  - Color `textColor`, rojo desde 2400, y a la mitad de alfa cuando el tiempo no corre (parpadea cada segundo).
+  - Si el reloj tiembla, se suma `Random.Next(−2,3)` a cada eje.
+- Aguja: `(324,477,7,19)` en +(88,88), con origen (3,17) y rotación `π + min(π, (t + f − 600)/2000·π)`.
+- Dinero: caja `(340,472,65,17)` en +(28,172). Hay 8 dígitos en +(68,196), separados 24 px, cada uno `(286, 502 − 8·dígito, 5, 8)` en color `Maroon`. Los ceros a la izquierda no se dibujan; el último dígito siempre.
+
+**Texto con sombra** (`drawTextWithShadow` con `dialogueFont`). El texto se dibuja tres veces: en (−3,+3) y en (0,+3) con `textShadowDarkerColor` (221,148,84), y después en (0,0) con el color pedido. Con `smallFont` o en ruso, alemán o coreano, el desplazamiento es (−2,+2). `SpriteFont` sigue la disposición de MonoGame:
+- El primer glifo de cada línea arranca en `max(LSB,0)`. Los siguientes, en `x + spacing + LSB`. Después de cada glifo se suma `ancho + RSB`.
+- El glifo se dibuja en `x + cropping.X, y + cropping.Y`.
+- `MeasureString` mide el máximo de `x + max(RSB,0)` por línea, y el alto es `líneas·lineSpacing` (con la última línea tan alta como su glifo más alto).
+
+**Cama y sueño.** La casa nivel 0 empieza con una cama `2048` (`Data/Furniture`: 2×4, caja 2×3) en el tile (9,8). Su lugar para dormir es `(x+1, y+1)`.
+- **Colisión de la cama:** la fila superior y desde la tercera hacia abajo. La fila del medio es transitable.
+- **Tile de sueño:** la fila `y+1`, en la columna `x + bedTileOffset`. `bedTileOffset` vale 0 si el granjero está a la derecha del centro de la cama y 1 si no. Pisar ese tile, si el tiempo corre y el granjero se movió desde que despertó, pregunta «Go to sleep for the night?» (`Strings/Locations:FarmHouse_Bed_GoToSleep`) con sí/no.
+- **Al despertar:** en el lugar para dormir ×64. Si el tile `(x−1, y+1)` está libre, se corre 64 px a la izquierda y mira a la derecha; si no, mira a la izquierda. Después suma 32 a Y.
+- La caja de pregunta definitiva llega con el sistema de diálogo (hito 6).
+
+## Hito 3: resultados (2026-10-21)
+
+- Reloj con paso fijo (`src/world/clock.ts`): actualización de diez minutos, temblor del reloj a las 2400 y 2500, y desmayo a las 2600.
+- Iluminación (`src/render/lighting.ts`): lightmap a ¼ de resolución, con luces que abren huecos y composición `pantalla − L²` mediante un blend mode propio de WebGL. En una captura del interior, de día a noche el piso pasó de (196,86,53) a (147,54,53): Δ = (−49,−32,0), exactamente lo que da la fórmula.
+- Fuentes de luz (`src/world/lights.ts`): `Light`, `WindowLight`, `DayTiles`/`NightTiles` con brillos, y desvanecimiento de las luces de ventana.
+- HUD (`src/render/hud.ts`): `SpriteFont` propio con la disposición de MonoGame (`src/render/spritefont.ts`), fecha, hora con sombra, íconos, aguja y dinero.
+- Cama inicial de la casa con dibujo en dos capas, colisión, pregunta para dormir, fundido y despertar en la cama del día siguiente. La fecha se guarda en la partida.
+- Parámetro de desarrollo `?time=hhmm`.
+
+Pendiente del hito: clima (lluvia, nieve, viento, tormenta), el resto de los muebles iniciales, el sprite del granjero acostado, el menú de envíos al dormir y la caja de diálogo definitiva.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

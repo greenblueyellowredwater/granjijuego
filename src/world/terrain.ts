@@ -22,6 +22,8 @@ export interface TerrainData {
   wildTrees: Record<string, WildTreeInfo>;
   objects: Record<string, { SpriteIndex: number; Texture?: string | null }>;
   bushTextureWidth: number;
+  furniture?: Record<string, string>;
+  furnitureTextureWidth?: number;
 }
 
 export type Entity =
@@ -30,7 +32,8 @@ export type Entity =
   | { kind: "object"; x: number; y: number; itemId: string }
   | { kind: "clump"; x: number; y: number; index: number; w: number; h: number }
   | { kind: "bush"; x: number; y: number; size: number; flipped: boolean; townBush: boolean; drawShadow: boolean }
-  | { kind: "grass"; x: number; y: number; grassType: number };
+  | { kind: "grass"; x: number; y: number; grassType: number }
+  | { kind: "bed"; x: number; y: number; itemId: string };
 
 export interface DrawOp {
   texture: string;
@@ -74,6 +77,7 @@ const CURSORS_16 = "LooseSprites/Cursors_1_6";
 const SPRING_OBJECTS = "Maps/springobjects";
 const BUSHES = "TileSheets/bushes";
 const GRASS = "TerrainFeatures/grass";
+const FURNITURE = "TileSheets/furniture";
 const GRASS_WEEDS = 3;
 const TREE_SHADOW_LEAFY = { sx: 663, sy: 1011, sw: 41, sh: 30 };
 const TREE_SHADOW_BARE = { sx: 469, sy: 298, sw: 42, sh: 31 };
@@ -192,6 +196,56 @@ export function solidRect(e: Entity): Rect | null {
   }
 }
 
+export function furnitureSize(data: string | undefined) {
+  const f = (data ?? "").split("/");
+  const pair = (v: string | undefined, w: number, h: number) => {
+    const [a, b] = (v ?? "").trim().split(/\s+/).map(Number);
+    return Number.isInteger(a) && Number.isInteger(b) ? { w: a, h: b } : { w, h };
+  };
+  return { type: f[1] ?? "", source: pair(f[2], 1, 2), box: pair(f[3], 1, 1) };
+}
+
+export function bedBox(e: Extract<Entity, { kind: "bed" }>, data?: TerrainData): Rect {
+  const { box } = furnitureSize(data?.furniture?.[e.itemId] ?? "Bed/bed/2 4/2 3");
+  return { x: e.x * TILE, y: e.y * TILE, w: box.w * TILE, h: box.h * TILE };
+}
+
+export function solidRects(e: Entity, data?: TerrainData): Rect[] {
+  if (e.kind === "bed") {
+    const b = bedBox(e, data);
+    return [
+      { x: b.x, y: b.y, w: b.w, h: TILE },
+      { x: b.x, y: b.y + 2 * TILE, w: b.w, h: b.h - 2 * TILE },
+    ].filter((r) => r.h > 0);
+  }
+  const r = solidRect(e);
+  return r ? [r] : [];
+}
+
+export function bedSpot(e: Extract<Entity, { kind: "bed" }>) {
+  return { x: e.x + 1, y: e.y + 1 };
+}
+
+export function bedTileOffset(previous: number, bed: Rect, farmer: Rect, farmerX: number) {
+  const touching = bed.x < farmer.x + farmer.w && farmer.x < bed.x + bed.w && bed.y < farmer.y + farmer.h && farmer.y < bed.y + bed.h;
+  if (touching) return previous;
+  return farmerX > bed.x + Math.trunc(bed.w / 2) ? 0 : 1;
+}
+
+export function bedSleepTile(e: Extract<Entity, { kind: "bed" }>, offset: number) {
+  return { x: e.x + offset, y: e.y + 1 };
+}
+
+export function wakeUpPosition(e: Extract<Entity, { kind: "bed" }>, tileFree: (x: number, y: number) => boolean) {
+  const spot = bedSpot(e);
+  let x = spot.x * TILE, facing: "left" | "right" = "left";
+  if (tileFree(e.x - 1, e.y + 1)) {
+    x -= TILE;
+    facing = "right";
+  }
+  return { x, y: spot.y * TILE + 32, facing };
+}
+
 export function treeTexture(info: WildTreeInfo | undefined, season: SeasonName) {
   const textures = info?.Textures ?? [];
   const idx = SEASON_INDEX[season];
@@ -306,6 +360,19 @@ export function drawOps(e: Entity, data: TerrainData, season: SeasonName, grass?
         const gy = py + Math.trunc(i / 2) * 32 + b.offset4 * 4 + 40;
         return { texture: GRASS, sx: b.whichWeed * 15, sy, sw: 15, sh: 20, x: gx - 30, y: gy - 70, depth: (gy + 16 - 20) / 10000 + gx / 1e7, flip: b.flip };
       });
+    }
+    case "bed": {
+      const { source, box } = furnitureSize(data.furniture?.[e.itemId] ?? "Bed/bed/2 4/2 3");
+      const width = data.furnitureTextureWidth ?? 512;
+      const index = Number(e.itemId);
+      const sx = (index * 16) % width, sy = Math.floor((index * 16) / width) * 16;
+      const sw = source.w * 16, sh = source.h * 16;
+      const top = py, bottom = py + box.h * TILE;
+      const y = py - (sh * 4 - box.h * TILE);
+      return [
+        { texture: FURNITURE, sx, sy, sw, sh, x: px, y, depth: (top + 1) / 10000, flip: false },
+        { texture: FURNITURE, sx: sx + sw, sy, sw, sh, x: px, y, depth: (bottom - 1) / 10000, flip: false },
+      ];
     }
     default:
       return [];

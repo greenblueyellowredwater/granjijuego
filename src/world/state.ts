@@ -9,6 +9,9 @@ export interface GameState {
   uniqueId: number;
   daysPlayed: number;
   season: SeasonName;
+  dayOfMonth: number;
+  year: number;
+  money: number;
   appearance?: Appearance;
   locations: Record<string, { entities: Entity[] }>;
 }
@@ -19,9 +22,16 @@ export function newGameState(random = Math.random): GameState {
     uniqueId: Math.floor(random() * 2 ** 48),
     daysPlayed: 1,
     season: "spring",
+    dayOfMonth: 1,
+    year: 1,
+    money: 500,
     appearance: DEFAULT_APPEARANCE,
     locations: {},
   };
+}
+
+export function withDefaults(state: GameState): GameState {
+  return { ...state, dayOfMonth: state.dayOfMonth ?? 1, year: state.year ?? 1, money: state.money ?? 500 };
 }
 
 export interface StateStore {
@@ -36,7 +46,7 @@ export function localStore(storage: Pick<Storage, "getItem" | "setItem" | "remov
       try {
         const raw = storage?.getItem(STORAGE_KEY);
         const parsed = raw ? (JSON.parse(raw) as GameState) : null;
-        if (parsed?.version === VERSION) return parsed;
+        if (parsed?.version === VERSION) return withDefaults(parsed);
       } catch {
         return newGameState();
       }

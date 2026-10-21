@@ -73,10 +73,15 @@ export class Disassembler {
     return `${this.md.typeDefName(this.owner.get(index))}::${this.md.string(this.md.tables.MethodDef[index - 1][3])}`;
   }
 
+  allMethods() {
+    return this.md.tables.MethodDef.map((_: unknown, i: number) => i + 1) as number[];
+  }
+
   findMethods(fullName: string) {
     const out: number[] = [];
     this.md.tables.MethodDef.forEach((_: unknown, i: number) => {
-      if (this.methodName(i + 1) === fullName) out.push(i + 1);
+      const name = this.methodName(i + 1);
+      if (fullName.endsWith("::*") ? name.startsWith(fullName.slice(0, -1)) : name === fullName) out.push(i + 1);
     });
     return out;
   }
@@ -194,6 +199,19 @@ export class Disassembler {
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [dll, ...names] = process.argv.slice(2);
   const d = new Disassembler(dll);
+  if (names[0] === "--grep") {
+    const needle = names[1];
+    d.allMethods().forEach((m) => {
+      let lines: string[];
+      try {
+        lines = d.disassemble(m);
+      } catch {
+        return;
+      }
+      if (lines.some((l) => l.includes(needle))) console.log(d.methodName(m));
+    });
+    process.exit(0);
+  }
   for (const n of names) {
     const found = d.findMethods(n);
     if (!found.length) console.log(`// no encontrado: ${n}`);
