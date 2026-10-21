@@ -164,6 +164,7 @@ export function farmerLayers(
   shirt: { spriteIndex: number; color: RGBA },
   pants: { spriteIndex: number; color: RGBA },
   hairTextureWidth = 128,
+  armColumns = 6,
 ): FarmerLayer[] {
   const r = sourceRect(frame);
   const p = pants.spriteIndex;
@@ -176,7 +177,7 @@ export function farmerLayers(
     { texture: "pants", sx: r.x + (p % 10) * 192 + (a.isMale ? 0 : 96), sy: r.y + Math.floor(p / 10) * 688, sw: 16, sh: 32, dx: 0, dy: 0, tint: pants.color, flip: frameFlip, order: 3 },
     { texture: "shirts", sx: shirtX, sy: shirtY, sw: 8, sh: 8, dx: 4 + feature.x, dy: 14 + feature.y, tint: null, flip: false, order: 6 },
     { texture: "shirts", sx: shirtX + 128, sy: shirtY, sw: 8, sh: 8, dx: 4 + feature.x, dy: 14 + feature.y, tint: shirt.color, flip: false, order: 6.5 },
-    { texture: "base", sx: r.x + 96, sy: r.y, sw: 16, sh: 32, dx: 0, dy: 0, tint: null, flip: frameFlip, order: facing === Facing.Up ? 8 : 14 },
+    { texture: "base", sx: r.x + armColumns * 16, sy: r.y, sw: 16, sh: 32, dx: 0, dy: 0, tint: null, flip: frameFlip, order: facing === Facing.Up ? 8 : 14 },
     { texture: "hair", sx: hx, sy: hy, sw: 16, sh: 32, dx: feature.x, dy: feature.y + 1 + adj, tint: a.hairColor, flip: facing === Facing.Left, order: 10 },
   ];
 }

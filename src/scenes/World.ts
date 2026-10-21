@@ -17,7 +17,24 @@ import { QuestionBox } from "../render/question.ts";
 import type { SpriteFontData } from "../render/spritefont.ts";
 import { RAIN_TEXTURE, WeatherRenderer } from "../render/weather.ts";
 import { MENU_TEXTURE, TINY_FONT, ToolbarRenderer, toolbarLayout } from "../render/toolbar.ts";
-import type { ItemData } from "../world/items.ts";
+import { parseId, type ItemData } from "../world/items.ts";
+import {
+  SingleAnimation,
+  swingAnimation,
+  toolDrawTransform,
+  toolKind,
+  toolLayerOffset,
+  toolLocation,
+  toolSpriteIndex,
+  toolStaminaCost,
+  wateringAnimation,
+  type FrameBehavior,
+  type ToolKind,
+} from "../world/tools.ts";
+import { addItem, consumeOne } from "../world/items.ts";
+import { afterHarvest, cropDrawMath, harvestQuality, isHarvestable, isInSeason, newCrop, type CropData } from "../world/crops.ts";
+import { dayUpdateLocations } from "../world/day.ts";
+import { animationSprite, canTill, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
 import { daySaveRandom, type GsqState } from "../world/gsq.ts";
 import {
@@ -59,9 +76,23 @@ const MAX_TICKS_PER_FRAME = 8;
 const TICK_REAL_MS = 1000 / TICKS_PER_SECOND;
 const FONT_DATA = "Fonts/SpriteFont1.spritefont";
 const TINY_FONT_DATA = "Fonts/tinyFont.spritefont";
+const WATERING_CAN_CAPACITY = 40;
 const SLOT_KEYS = ["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "ZERO", "MINUS", "PLUS"];
 const FARMHOUSE = "FarmHouse";
 const STARTER_BED = { x: 9, y: 8, itemId: "2048" };
+const STARTER_GIFT_FLAG = "starterGiftPlaced";
+
+function starterGiftPosition(props: Record<string, unknown>) {
+  const raw = String(props.FarmHouseStarterSeedsPosition ?? "").trim().split(/\s+/).map(Number);
+  return raw.length === 2 && raw.every(Number.isInteger) ? { x: raw[0], y: raw[1] } : { x: 3, y: 7 };
+}
+
+function starterGiftItems(props: Record<string, unknown>) {
+  const raw = String(props.FarmHouseStarterGift ?? "").trim().split(/\s+/).filter(Boolean);
+  const items: { id: string; stack: number }[] = [];
+  for (let i = 0; i < raw.length; i += 2) items.push({ id: raw[i].startsWith("(") ? raw[i] : `(O)${raw[i]}`, stack: Number(raw[i + 1]) || 1 });
+  return items.length ? items : [{ id: "(O)472", stack: 15 }];
+}
 
 export type LocationsData = Record<string, { CreateOnLoad?: { MapPath?: string | null } | null }>;
 
@@ -74,6 +105,8 @@ export interface WorldStart {
 }
 
 export interface WorldText extends HudStrings {
+  wrongSeason: string;
+  inventoryFull: string;
   sleepQuestion: string;
   yes: string;
   no: string;
@@ -94,6 +127,7 @@ export interface WorldData {
   weather: WeatherData;
   greenRainDays: number[];
   items: ItemData;
+  crops: Record<string, CropData>;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
 }
@@ -147,6 +181,13 @@ export class World extends Phaser.Scene {
   private endingDay = false;
   private weatherFx: WeatherRenderer | null = null;
   private toolbar: ToolbarRenderer | null = null;
+  private entities: Entity[] = [];
+  private dirtPool: Phaser.GameObjects.Image[] = [];
+  private dirtDirty = true;
+  private tool: { anim: SingleAnimation; kind: ToolKind; initial: number; facing: Facing; texture: string; target: { x: number; y: number } } | null = null;
+  private toolImage: Phaser.GameObjects.Image | null = null;
+  private temps: TempSprite[] = [];
+  private tempPool: Phaser.GameObjects.Image[] = [];
 
   constructor() {
     super("World");
@@ -172,6 +213,13 @@ export class World extends Phaser.Scene {
     this.hasMoved = false;
     this.lastTile = { x: -1, y: -1 };
     this.endingDay = false;
+    this.entities = [];
+    this.dirtPool = [];
+    this.dirtDirty = true;
+    this.tool = null;
+    this.toolImage = null;
+    this.temps = [];
+    this.tempPool = [];
   }
 
   private get outdoors() {
@@ -204,6 +252,7 @@ export class World extends Phaser.Scene {
     const textures = new Set([
       "LooseSprites/Cursors",
       "LooseSprites/Cursors_1_6",
+      "LooseSprites/Giftbox",
       "Maps/springobjects",
       "TileSheets/bushes",
       "TerrainFeatures/grass",
@@ -214,6 +263,11 @@ export class World extends Phaser.Scene {
       MENU_TEXTURE,
       "TileSheets/tools",
       "TileSheets/weapons",
+      "TileSheets/animations",
+      "TerrainFeatures/hoeDirt",
+      "TerrainFeatures/hoeDirtDark",
+      "TerrainFeatures/hoeDirtSnow",
+      "TileSheets/crops",
       ...LightingOverlay.textureKeys(),
     ]);
     for (const info of Object.values(this.params.terrain.wildTrees)) {
@@ -236,7 +290,14 @@ export class World extends Phaser.Scene {
       entities.push({ kind: "bed", ...STARTER_BED });
       changed = true;
     }
+    if (this.location.name === FARMHOUSE && !state.flags.includes(STARTER_GIFT_FLAG)) {
+      const pos = starterGiftPosition(this.location.props);
+      entities.push({ kind: "giftbox", x: pos.x, y: pos.y, items: starterGiftItems(this.location.props), index: 0 });
+      state.flags.push(STARTER_GIFT_FLAG);
+      changed = true;
+    }
     if (changed) store.save(state);
+    this.entities = entities;
     this.bed = (entities.find((e) => e.kind === "bed") as Extract<Entity, { kind: "bed" }> | undefined) ?? null;
     this.location.setSolids(entities.flatMap((e) => solidRects(e, this.params.terrain)));
     const grass: GrassContext = {
@@ -253,6 +314,225 @@ export class World extends Phaser.Scene {
       const rect = e.kind === "tree" ? treeFadeRect(e) : null;
       if (rect && images.length) this.fadingTrees.push({ rect, alpha: 1, images });
     }
+  }
+
+  private dirtAt(x: number, y: number) {
+    return this.entities.find((e): e is Extract<Entity, { kind: "hoeDirt" }> => e.kind === "hoeDirt" && e.x === x && e.y === y);
+  }
+
+  private occupied(x: number, y: number) {
+    return this.entities.some((e) => {
+      if (e.kind === "grass") return false;
+      if (e.kind === "clump") return x >= e.x && x < e.x + e.w && y >= e.y && y < e.y + e.h;
+      if (e.kind === "bush") return y === e.y && x >= e.x && x < e.x + [1, 2, 3, 1, 2][e.size];
+      return e.x === x && e.y === y;
+    });
+  }
+
+  private redrawDirt() {
+    if (!this.dirtDirty) return;
+    this.dirtDirty = false;
+    const dirt = this.entities.filter((e): e is Extract<Entity, { kind: "hoeDirt" }> => e.kind === "hoeDirt");
+    const index = new Map(dirt.map((d) => [`${d.x},${d.y}`, d]));
+    const texture = hoeDirtTexture(this.location.name, this.params.state.season);
+    let used = 0;
+    for (const d of dirt) {
+      for (const op of hoeDirtDrawOps(d, neighborMasks(d, (x, y) => index.get(`${x},${y}`)), texture)) {
+        if (!this.textures.exists(op.texture)) continue;
+        const tex = this.textures.get(op.texture);
+        const frame = `${op.sx},${op.sy},${op.sw},${op.sh}`;
+        if (!tex.has(frame)) tex.add(frame, 0, op.sx, op.sy, op.sw, op.sh);
+        const img = this.dirtPool[used] ?? this.add.image(0, 0, op.texture, frame).setOrigin(0, 0).setScale(PIXEL_SCALE);
+        this.dirtPool[used++] = img;
+        img.setTexture(op.texture, frame).setOrigin(0, 0).setPosition(op.x, op.y).setFlipX(false).setDepth(this.rendered.spriteDepth(op.depth)).setVisible(true);
+      }
+      if (!d.crop) continue;
+      const data = this.params.crops[d.crop.seed];
+      const cropTexture = (data?.Texture ?? "TileSheets/crops").replace(/\\/g, "/");
+      if (!this.textures.exists(cropTexture)) continue;
+      const m = cropDrawMath(d.crop, d.x, d.y);
+      const tex = this.textures.get(cropTexture);
+      const frame = `${m.source.sx},${m.source.sy},${m.source.sw},${m.source.sh}`;
+      if (!tex.has(frame)) tex.add(frame, 0, m.source.sx, m.source.sy, m.source.sw, m.source.sh);
+      const img = this.dirtPool[used] ?? this.add.image(0, 0, cropTexture, frame).setScale(PIXEL_SCALE);
+      this.dirtPool[used++] = img;
+      img
+        .setTexture(cropTexture, frame)
+        .setOrigin(m.originX / 16, m.originY / 32)
+        .setPosition(m.x, m.y)
+        .setFlipX(d.crop.flip)
+        .setDepth(this.rendered.spriteDepth(m.layer))
+        .setVisible(true);
+    }
+    for (let i = used; i < this.dirtPool.length; i++) this.dirtPool[i].setVisible(false);
+  }
+
+  private currentTool() {
+    const item = this.params.state.inventory[this.params.state.currentToolIndex];
+    if (!item) return null;
+    const { type, id } = parseId(item.id);
+    if (type !== "T") return null;
+    const data = this.params.items.tools[id];
+    if (!data) return null;
+    return { kind: toolKind(data.ClassName), initial: data.SpriteIndex, texture: (data.Texture ?? "TileSheets/tools").replace(/\\/g, "/") };
+  }
+
+  private tryPlant(target?: { x: number; y: number }) {
+    const state = this.params.state;
+    const item = state.inventory[state.currentToolIndex];
+    if (!item) return false;
+    const { type, id } = parseId(item.id);
+    const data = type === "O" ? this.params.crops[id] : undefined;
+    if (!data) return false;
+    const at = target ?? toolLocation(this.body.x, this.body.y, this.body.facing);
+    const tx = Math.floor(at.x / TILE), ty = Math.floor(at.y / TILE);
+    const b = farmerBox(this.body.x, this.body.y);
+    const c = { x: Math.floor((b.x + b.w / 2) / TILE), y: Math.floor((b.y + b.h / 2) / TILE) };
+    if (Math.abs(tx - c.x) > 1 || Math.abs(ty - c.y) > 1) return true;
+    const dirt = this.dirtAt(tx, ty);
+    if (!dirt || dirt.crop) return true;
+    if (this.outdoors && !isInSeason(data, state.season)) {
+      this.message = this.params.text.wrongSeason;
+      return true;
+    }
+    dirt.crop = newCrop(id, data, Math.random() < 0.5);
+    consumeOne(state.inventory, state.currentToolIndex);
+    this.dirtDirty = true;
+    return true;
+  }
+
+  private tryOpenGiftbox(tx: number, ty: number) {
+    const box = this.entities.find((e): e is Extract<Entity, { kind: "giftbox" }> => e.kind === "giftbox" && e.x === tx && e.y === ty);
+    if (!box) return false;
+    const state = this.params.state;
+    box.items = box.items.map((i) => addItem(state.inventory, i)).filter((i): i is NonNullable<typeof i> => i !== null);
+    if (box.items.length > 0) {
+      this.message = this.params.text.inventoryFull;
+      return true;
+    }
+    this.entities.splice(this.entities.indexOf(box), 1);
+    this.location.setSolids(this.entities.flatMap((e) => solidRects(e, this.params.terrain)));
+    this.scene.restart({ ...this.params, start: { location: this.location.name, x: centerTile(this.body).x, y: centerTile(this.body).y, facing: this.body.facing } });
+    return true;
+  }
+
+  private tryHarvest(tx: number, ty: number) {
+    const dirt = this.dirtAt(tx, ty);
+    if (!dirt?.crop || !isHarvestable(dirt.crop)) return false;
+    const { state } = this.params;
+    const data = this.params.crops[dirt.crop.seed];
+    const { quality, stack } = harvestQuality(tx, ty, state.daysPlayed, state.uniqueId, 0, 0, data);
+    const rest = addItem(state.inventory, { id: `(O)${dirt.crop.harvest}`, stack, quality });
+    if (rest) {
+      this.message = this.params.text.inventoryFull;
+      return true;
+    }
+    dirt.crop = afterHarvest(dirt.crop, data);
+    if (!dirt.crop) {
+      this.temps.push(animationSprite(17, tx * TILE, ty * TILE, 7, Math.random() < 0.5, 125));
+      this.temps.push(animationSprite(14, tx * TILE, ty * TILE, 7, Math.random() < 0.5, 50));
+    }
+    this.dirtDirty = true;
+    return true;
+  }
+
+  private useToolButton(target?: { x: number; y: number }) {
+    if (this.tool || this.question?.open || this.endingDay || this.warping) return;
+    if (this.tryPlant(target)) return;
+    const t = this.currentTool();
+    if (!t) return;
+    const state = this.params.state;
+    let facing = this.body.facing;
+    if (target) {
+      const b = farmerBox(this.body.x, this.body.y);
+      const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+      const dx = target.x - cx, dy = target.y - cy;
+      if (Math.abs(dx) <= 96 && Math.abs(dy) <= 96) facing = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? Facing.Right : Facing.Left) : dy > 0 ? Facing.Down : Facing.Up;
+      else target = undefined;
+    }
+    this.body.facing = facing;
+    const at = target ?? toolLocation(this.body.x, this.body.y, facing);
+    if (t.kind === "wateringCan" && state.waterLeft <= 0 && !this.location.isWater(Math.floor(at.x / TILE), Math.floor(at.y / TILE))) return;
+    const frames = t.kind === "wateringCan" ? wateringAnimation(facing) : swingAnimation(facing);
+    this.tool = { kind: t.kind, initial: t.initial, facing, texture: t.texture, target: at, anim: null as unknown as SingleAnimation };
+    this.tool.anim = new SingleAnimation(frames, (b) => this.onToolBehavior(b));
+  }
+
+  private onToolBehavior(b: FrameBehavior) {
+    if (b !== "useTool" || !this.tool) return;
+    const state = this.params.state;
+    const tx = Math.floor(this.tool.target.x / TILE), ty = Math.floor(this.tool.target.y / TILE);
+    if (this.tool.kind === "hoe") {
+      state.stamina -= toolStaminaCost(1, 0);
+      if (canTill(this.location, tx, ty, (x, y) => this.occupied(x, y))) {
+        this.entities.push({ kind: "hoeDirt", x: tx, y: ty, watered: false });
+        this.temps.push(animationSprite(12, tx * TILE, ty * TILE, 8, Math.random() < 0.5, 50));
+        this.dirtDirty = true;
+      }
+    } else if (this.tool.kind === "wateringCan") {
+      if (this.location.isWater(tx, ty)) {
+        state.waterLeft = WATERING_CAN_CAPACITY;
+        return;
+      }
+      if (state.waterLeft <= 0) return;
+      state.stamina -= toolStaminaCost(1, 0);
+      state.waterLeft--;
+      const dirt = this.dirtAt(tx, ty);
+      if (dirt && !dirt.watered) {
+        dirt.watered = true;
+        this.dirtDirty = true;
+      }
+    } else state.stamina -= toolStaminaCost(1, 0);
+  }
+
+  private tickTool() {
+    const t = this.tool;
+    if (!t) return;
+    t.anim.tick(TICK_MS);
+    if (t.anim.done) this.tool = null;
+  }
+
+  private drawTool() {
+    const t = this.tool;
+    const transform = t ? toolDrawTransform(t.kind, t.facing, t.anim.index) : null;
+    if (!t || !transform || !this.textures.exists(t.texture)) {
+      this.toolImage?.setVisible(false);
+      return;
+    }
+    const index = toolSpriteIndex(t.initial, t.kind, t.facing, t.anim.index);
+    const width = this.textures.get(t.texture).getSourceImage().width;
+    const sx = ((index * 16) % width) + transform.sourceShift, sy = Math.floor((index * 16) / width) * 16;
+    const tex = this.textures.get(t.texture);
+    const frame = `${sx},${sy},16,32`;
+    if (!tex.has(frame)) tex.add(frame, 0, sx, sy, 16, 32);
+    this.toolImage ??= this.add.image(0, 0, t.texture, frame).setScale(PIXEL_SCALE);
+    const box = farmerBox(this.body.x, this.body.y);
+    const layer = (box.y + box.h / 2) / 10000 + toolLayerOffset(t.facing);
+    this.toolImage
+      .setTexture(t.texture, frame)
+      .setOrigin(0, transform.originY / 32)
+      .setPosition(Math.floor(this.body.x) + transform.x, Math.floor(this.body.y) + transform.y)
+      .setRotation(transform.rotation)
+      .setFlipX(transform.flip)
+      .setDepth(this.rendered.spriteDepth(layer))
+      .setVisible(true);
+  }
+
+  private drawTemps(ms: number) {
+    let used = 0;
+    this.temps = this.temps.filter((s) => {
+      s.elapsed += ms;
+      const f = tempSpriteFrame(s);
+      if (!f || !this.textures.exists(s.texture)) return false;
+      const tex = this.textures.get(s.texture);
+      const frame = `${f.sx},${f.sy},${f.sw},${f.sh}`;
+      if (!tex.has(frame)) tex.add(frame, 0, f.sx, f.sy, f.sw, f.sh);
+      const img = this.tempPool[used] ?? this.add.image(0, 0, s.texture, frame).setOrigin(0, 0);
+      this.tempPool[used++] = img;
+      img.setTexture(s.texture, frame).setPosition(s.x, s.y).setFlipX(s.flipped).setDepth(this.rendered.spriteDepth(s.depth)).setVisible(true);
+      return true;
+    });
+    for (let i = used; i < this.tempPool.length; i++) this.tempPool[i].setVisible(false);
   }
 
   private applyTiles(property: string) {
@@ -328,7 +608,7 @@ export class World extends Phaser.Scene {
     const tex = this.textures.get(op.texture);
     const frame = `${op.sx},${op.sy},${op.sw},${op.sh}`;
     if (!tex.has(frame)) tex.add(frame, 0, op.sx, op.sy, op.sw, op.sh);
-    return this.add.image(op.x, op.y, op.texture, frame).setOrigin(0, 0).setScale(PIXEL_SCALE).setFlipX(op.flip).setDepth(this.rendered.spriteDepth(op.depth));
+    return this.add.image(op.x, op.y, op.texture, frame).setOrigin(0, 0).setScale(op.scale ?? PIXEL_SCALE).setFlipX(op.flip).setDepth(this.rendered.spriteDepth(op.depth));
   }
 
   create() {
@@ -372,6 +652,7 @@ export class World extends Phaser.Scene {
 
     const kb = this.input.keyboard!;
     this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,X,E") as Record<string, Phaser.Input.Keyboard.Key>;
+    kb.on("keydown-C", () => this.useToolButton());
     kb.on("keydown-X", () => this.interact());
     kb.on("keydown-E", () => this.interact());
     kb.on("keydown-ENTER", () => this.question?.confirm());
@@ -394,6 +675,7 @@ export class World extends Phaser.Scene {
         return;
       }
       if (p.rightButtonDown()) this.interact();
+      else if (p.leftButtonDown()) this.useToolButton({ x: p.worldX, y: p.worldY });
     });
     cam.fadeIn(150, 0, 0, 0);
   }
@@ -433,6 +715,10 @@ export class World extends Phaser.Scene {
       return;
     }
     const t = facingTile(this.body);
+    if (this.tryOpenGiftbox(t.x, t.y)) return;
+    if (this.tryHarvest(t.x, t.y)) return;
+    const c = centerTile(this.body);
+    if (this.tryHarvest(c.x, c.y)) return;
     const action = this.location.action(t.x, t.y);
     if (!action) return;
     const warp = parseActionWarp(action);
@@ -457,6 +743,10 @@ export class World extends Phaser.Scene {
 
   private get timePasses() {
     return !this.question?.open && !this.endingDay && !this.warping;
+  }
+
+  private get canMove() {
+    return this.timePasses && !this.tool;
   }
 
   private onClockEvents(events: ReturnType<GameClock["tick"]>) {
@@ -492,6 +782,8 @@ export class World extends Phaser.Scene {
       const weather = updateWeatherForNewDay(gsq, state.weatherForTomorrow, this.params.weather, { state: gsq, random });
       state.weather = weather.today;
       state.weatherForTomorrow = weather.tomorrow;
+      dayUpdateLocations(state, this.params.crops, weatherFlags(state.weather).raining);
+      state.stamina = state.maxStamina;
       clock.time = 600;
       clock.interval = 0;
       clock.shakeMs = 0;
@@ -502,7 +794,8 @@ export class World extends Phaser.Scene {
 
   private simulate() {
     const pressed = this.pressed();
-    if (!this.timePasses) pressed.clear();
+    if (!this.canMove) pressed.clear();
+    this.tickTool();
     const before = { x: this.body.x, y: this.body.y };
     this.running = !this.keys.SHIFT.isDown;
     const result = step(this.location, this.body, pressed, this.running, TICK_MS);
@@ -554,16 +847,16 @@ export class World extends Phaser.Scene {
   }
 
   private placeSprites() {
-    const f = this.animator.frame;
+    const f = this.tool ? this.tool.anim.frame : this.animator.frame;
     const x = Math.floor(this.body.x);
     const y = Math.floor(this.body.y) - 96 + f.offsetY * PIXEL_SCALE;
-    const shrink = this.running && this.animator.animationIndexInLoop > 1 ? Math.abs(this.featureYOffset[f.frame] ?? 0) * 0.5 : 0;
+    const shrink = !this.tool && this.running && this.animator.animationIndexInLoop > 1 ? Math.abs(this.featureYOffset[f.frame] ?? 0) * 0.5 : 0;
     this.shadow.setPosition(this.body.x + 32, this.body.y + 24).setScale(PIXEL_SCALE - shrink);
     const box = farmerBox(this.body.x, this.body.y);
     const drawLayer = (box.y + box.h / 2) / 10000;
-    const layer = this.rendered.spriteDepth(drawLayer);
     this.shadow.setDepth(shadowAboveBuildings(this.location, this.body) ? this.rendered.spriteDepth(drawLayer - 1e-6) : this.rendered.belowBuildingsDepth);
-    this.farmer.update(f, this.body.facing, x, y, layer);
+    this.farmer.update(f, this.body.facing, x, y, drawLayer, (ld) => this.rendered.spriteDepth(ld));
+    this.drawTool();
   }
 
   private updateCamera() {
@@ -577,7 +870,7 @@ export class World extends Phaser.Scene {
     if (!this.location || !this.body) return;
     this.rendered.update(time);
     if (!this.warping) {
-      this.accumulator += delta;
+      this.accumulator += Math.min(this.game.loop.rawDelta, 250);
       let ticks = 0;
       while (this.accumulator >= TICK_REAL_MS && ticks < MAX_TICKS_PER_FRAME && !this.warping) {
         this.simulate();
@@ -589,6 +882,8 @@ export class World extends Phaser.Scene {
     this.placeSprites();
     this.updateCamera();
     this.drawWater();
+    this.redrawDirt();
+    this.drawTemps(delta);
     this.drawLightingAndHud(time);
 
     const c = centerTile(this.body);

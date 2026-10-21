@@ -17,6 +17,10 @@ export interface GameState {
   weatherForTomorrow: string;
   inventory: (Item | null)[];
   currentToolIndex: number;
+  stamina: number;
+  maxStamina: number;
+  waterLeft: number;
+  flags: string[];
   appearance?: Appearance;
   locations: Record<string, { entities: Entity[] }>;
 }
@@ -34,6 +38,10 @@ export function newGameState(random = Math.random): GameState {
     weatherForTomorrow: "Sun",
     inventory: startingInventory(),
     currentToolIndex: 0,
+    stamina: 270,
+    maxStamina: 270,
+    waterLeft: 40,
+    flags: [],
     appearance: DEFAULT_APPEARANCE,
     locations: {},
   };
@@ -49,6 +57,10 @@ export function withDefaults(state: GameState): GameState {
     weatherForTomorrow: state.weatherForTomorrow ?? "Sun",
     inventory: state.inventory ?? startingInventory(),
     currentToolIndex: state.currentToolIndex ?? 0,
+    stamina: state.stamina ?? 270,
+    maxStamina: state.maxStamina ?? 270,
+    waterLeft: state.waterLeft ?? 40,
+    flags: state.flags ?? [],
   };
 }
 

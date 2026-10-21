@@ -1,6 +1,7 @@
 import { TILE, type Location } from "./location.ts";
 import { createRandom, DotNetRandom } from "./dotnet-random.ts";
 import type { Rect } from "./movement.ts";
+import type { CropState } from "./crops.ts";
 
 export const SEASON_INDEX = { spring: 0, summer: 1, fall: 2, winter: 3 } as const;
 export type SeasonName = keyof typeof SEASON_INDEX;
@@ -33,7 +34,9 @@ export type Entity =
   | { kind: "clump"; x: number; y: number; index: number; w: number; h: number }
   | { kind: "bush"; x: number; y: number; size: number; flipped: boolean; townBush: boolean; drawShadow: boolean }
   | { kind: "grass"; x: number; y: number; grassType: number }
-  | { kind: "bed"; x: number; y: number; itemId: string };
+  | { kind: "bed"; x: number; y: number; itemId: string }
+  | { kind: "hoeDirt"; x: number; y: number; watered: boolean; crop?: CropState | null }
+  | { kind: "giftbox"; x: number; y: number; items: { id: string; stack: number }[]; index: number };
 
 export interface DrawOp {
   texture: string;
@@ -46,6 +49,7 @@ export interface DrawOp {
   depth: number;
   flip: boolean;
   fades?: boolean;
+  scale?: number;
 }
 
 export const TREE_FADE_MIN = 0.4;
@@ -191,6 +195,8 @@ export function solidRect(e: Entity): Rect | null {
       return { x: e.x * TILE, y: e.y * TILE, w: e.w * TILE, h: e.h * TILE };
     case "bush":
       return { x: e.x * TILE, y: e.y * TILE, w: TILE * [1, 2, 3, 1, 2][e.size], h: TILE };
+    case "giftbox":
+      return { x: e.x * TILE, y: e.y * TILE, w: TILE, h: TILE };
     default:
       return null;
   }
@@ -361,6 +367,11 @@ export function drawOps(e: Entity, data: TerrainData, season: SeasonName, grass?
         return { texture: GRASS, sx: b.whichWeed * 15, sy, sw: 15, sh: 20, x: gx - 30, y: gy - 70, depth: (gy + 16 - 20) / 10000 + gx / 1e7, flip: b.flip };
       });
     }
+    case "giftbox":
+      return [
+        { texture: "LooseSprites/shadow", sx: 0, sy: 0, sw: 12, sh: 7, x: px + 16 - 6 * 5, y: py + 53 - 3 * 5, depth: 1e-7, flip: false, scale: 5 },
+        { texture: "LooseSprites/Giftbox", sx: 0, sy: e.index * 32, sw: 16, sh: 32, x: px, y: py - 52, depth: (py + TILE) / 10000, flip: false },
+      ];
     case "bed": {
       const { source, box } = furnitureSize(data.furniture?.[e.itemId] ?? "Bed/bed/2 4/2 3");
       const width = data.furnitureTextureWidth ?? 512;

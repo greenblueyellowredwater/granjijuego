@@ -14,7 +14,7 @@ import {
 import type { Facing } from "../world/movement.ts";
 
 const SCALE = 4;
-const LAYER_STEP = 1e-8;
+const LAYER_STEP = 1e-6;
 
 export function farmerTextureKeys(a: Appearance) {
   return {
@@ -80,9 +80,9 @@ export class FarmerSprite {
     return name;
   }
 
-  update(f: AnimFrame, facing: Facing, x: number, y: number, depth: number) {
+  update(f: AnimFrame & { arm?: number }, facing: Facing, x: number, y: number, layerDepth: number, toDepth: (layerDepth: number) => number) {
     const feature = { x: this.featureX[f.frame] ?? 0, y: this.featureY[f.frame] ?? 0 };
-    const layers = farmerLayers(this.appearance, f.frame, f.flip, facing, feature, this.shirt, this.pants);
+    const layers = farmerLayers(this.appearance, f.frame, f.flip, facing, feature, this.shirt, this.pants, 128, f.arm ?? 6);
     layers.forEach((l, i) => {
       const img = this.images[i];
       const texture = this.textureFor[l.texture];
@@ -95,7 +95,7 @@ export class FarmerSprite {
         .setPosition(x + l.dx * SCALE, y + l.dy * SCALE)
         .setFlipX(l.flip)
         .setTint(toTint(l.tint))
-        .setDepth(depth + l.order * LAYER_STEP)
+        .setDepth(toDepth(layerDepth + l.order * LAYER_STEP))
         .setVisible(true);
     });
   }

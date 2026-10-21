@@ -62,7 +62,10 @@ export class Disassembler {
   private readonly md: any;
   private readonly owner = new Map<number, number>();
 
-  constructor(dll: string) {
+  constructor(
+    dll: string,
+    private readonly withSignatures = false,
+  ) {
     this.md = new Metadata(dll);
     this.md.tables.TypeDef.forEach((_: unknown, i: number) => {
       for (const m of this.md.memberRange("MethodDef", i + 1)) this.owner.set(m, i + 1);
@@ -116,6 +119,40 @@ export class Disassembler {
     }
   }
 
+  private signature(blobIndex: number) {
+    const b: Buffer = this.md.blob(blobIndex);
+    let p = 0;
+    const compressed = () => {
+      const x = b[p];
+      if ((x & 0x80) === 0) return b[p++];
+      if ((x & 0xc0) === 0x80) {
+        const v = ((x & 0x3f) << 8) | b[p + 1];
+        p += 2;
+        return v;
+      }
+      const v = ((x & 0x1f) << 24) | (b[p + 1] << 16) | (b[p + 2] << 8) | b[p + 3];
+      p += 4;
+      return v;
+    };
+    const conv = b[p++];
+    if (conv === 0x06) return "";
+    if (conv & 0x10) compressed();
+    const params = compressed();
+    const ret = b[p];
+    return `{${conv & 0x20 ? "h" : "s"},${params},${ret === 0x01 ? "v" : "r"}}`;
+  }
+
+  private methodSig(table: number, idx: number) {
+    if (!this.withSignatures) return "";
+    try {
+      if (table === 0x06) return this.signature(this.md.tables.MethodDef[idx - 1][4]);
+      if (table === 0x0a) return this.signature(this.md.tables.MemberRef[idx - 1][2]);
+    } catch {
+      return "";
+    }
+    return "";
+  }
+
   token(tok: number): string {
     const table = tok >>> 24, idx = tok & 0xffffff;
     const t = this.md.tables;
@@ -123,13 +160,13 @@ export class Disassembler {
       case 0x70:
         return JSON.stringify(this.userString(idx));
       case 0x06:
-        return this.methodName(idx);
+        return this.methodName(idx) + this.methodSig(0x06, idx);
       case 0x04: {
         const owner = t.TypeDef.findIndex((_: unknown, i: number) => this.md.memberRange("Field", i + 1).includes(idx));
         return `${owner >= 0 ? this.md.typeDefName(owner + 1) : "?"}::${this.md.string(t.Field[idx - 1][1])}`;
       }
       case 0x0a:
-        return `${this.parentName(t.MemberRef[idx - 1][0])}::${this.md.string(t.MemberRef[idx - 1][1])}`;
+        return `${this.parentName(t.MemberRef[idx - 1][0])}::${this.md.string(t.MemberRef[idx - 1][1])}${this.methodSig(0x0a, idx)}`;
       case 0x01:
         return this.md.typeRefName(idx);
       case 0x02:
@@ -138,7 +175,8 @@ export class Disassembler {
         return this.typeSpecName(idx);
       case 0x2b: {
         const m = t.MethodSpec[idx - 1][0];
-        return `${m & 1 ? this.token(0x0a000000 | (m >> 1)) : this.methodName(m >> 1)}<…>`;
+        const base = m & 1 ? this.token(0x0a000000 | (m >> 1)) : this.methodName(m >> 1) + this.methodSig(0x06, m >> 1);
+        return base.replace(/(\{[^}]*\})?$/, "<…>$1");
       }
       default:
         return `0x${tok.toString(16)}`;
