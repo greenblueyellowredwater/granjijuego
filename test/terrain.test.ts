@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { Location, TILE, type TiledMap } from "../src/world/location.ts";
 import { collides, positionForTile } from "../src/world/movement.ts";
-import { SeededRandom } from "../src/world/rng.ts";
-import { bushSourceRect, drawOps, solidRect, spawnFromPaths, treeTexture, type Entity, type TerrainData } from "../src/world/terrain.ts";
+import { DotNetRandom } from "../src/world/dotnet-random.ts";
+import { bushSourceRect, drawOps, generateLocationObjects, grassBlades, grassSourceOffset, loadsPathsObjects, solidRect, spawnFromPaths as spawnRaw, treesFromMapProperty, treeTexture, type Entity, type TerrainData } from "../src/world/terrain.ts";
+
+const spawnFromPaths = (loc: Location, season: Parameters<typeof spawnRaw>[1], outdoors: boolean, rng = new DotNetRandom(7)) => spawnRaw(loc, season, outdoors, rng);
 
 const W = 12, H = 8;
 const PATHS_GID = 100;
@@ -41,7 +43,7 @@ const byKind = (es: Entity[], kind: Entity["kind"]) => es.filter((e) => e.kind =
 describe("spawnFromPaths", () => {
   it("genera según el índice de Paths", () => {
     const loc = new Location("Forest", makeMap("Forest", { "1,1": 9, "2,1": 11, "3,1": 13, "4,1": 16, "5,1": 18, "6,1": 25, "7,1": 26, "8,1": 22, "9,1": 23, "10,1": 24 }));
-    const es = spawnFromPaths(loc, "spring", true, new SeededRandom(1));
+    const es = spawnFromPaths(loc, "spring", true, new DotNetRandom(1));
     expect(byKind(es, "tree").map((e) => (e as any).treeId).sort()).toEqual(["1", "3", expect.any(String)].sort());
     const objects = byKind(es, "object").map((e) => (e as any).itemId);
     expect(objects).toHaveLength(3);
@@ -127,5 +129,55 @@ describe("dibujo y colisión", () => {
     expect(collides(loc, free.x, free.y)).toBe(false);
     expect(solidRect({ kind: "grass", x: 1, y: 1, grassType: 1 })).toBeNull();
     expect(TILE).toBe(64);
+  });
+});
+
+describe("comportamiento del original", () => {
+  const withProps = (props: Record<string, string>, paths: Record<string, number>) => {
+    const m = makeMap("X", paths);
+    m.properties = Object.entries(props).map(([name, value]) => ({ name, value }));
+    return m;
+  };
+
+  it("solo carga Paths en exteriores, BathHouse_Entry, TreatAsOutdoors o forceLoadObjects", () => {
+    expect(loadsPathsObjects(new Location("Casa", withProps({}, {})))).toBe(false);
+    expect(loadsPathsObjects(new Location("Pueblo", withProps({ Outdoors: "T" }, {})))).toBe(true);
+    expect(loadsPathsObjects(new Location("BathHouse_Entry", withProps({}, {})))).toBe(true);
+    expect(loadsPathsObjects(new Location("Cueva", withProps({ TreatAsOutdoors: "T" }, {})))).toBe(true);
+    expect(loadsPathsObjects(new Location("Isla", withProps({ forceLoadObjects: "T" }, {})))).toBe(true);
+    const interior = new Location("Casa", withProps({ Trees: "1 1 0" }, { "3,3": 13, "4,4": 9 }));
+    expect(generateLocationObjects(interior, "spring", new DotNetRandom(1))).toEqual([{ kind: "tree", x: 1, y: 1, treeId: "1", stage: 5, flipped: false }]);
+  });
+
+  it("lee la propiedad Trees como tripletas x y tipo, con tipo+1", () => {
+    const invalid: string[] = [];
+    const loc = new Location("Pueblo", withProps({ Outdoors: "T", Trees: "2 3 0  5 6 2  x 1 1" }, {}));
+    expect(treesFromMapProperty(loc, (g) => invalid.push(g)).map((t) => [t.x, t.y, (t as any).treeId])).toEqual([[2, 3, "1"], [5, 6, "3"]]);
+    expect(invalid).toEqual(["x 1 1"]);
+  });
+
+  it("usa el desplazamiento de origen del pasto por tipo y estación", () => {
+    expect(grassSourceOffset(1, "summer", true)).toBe(20);
+    expect(grassSourceOffset(1, "winter", true)).toBe(80);
+    expect(grassSourceOffset(1, "winter", false)).toBe(0);
+    expect(grassSourceOffset(7, "fall", true)).toBe(200);
+    expect(grassSourceOffset(5, "spring", true)).toBe(120);
+  });
+
+  it("sortea las matas de pasto de forma determinista y las sube bajo Front", () => {
+    const ctx = { uniqueId: 123456789, daysPlayed: 1, outdoors: true, hasFrontTile: () => false };
+    const a = grassBlades(10, 20, ctx);
+    expect(grassBlades(10, 20, ctx)).toEqual(a);
+    expect(grassBlades(10, 20, { ...ctx, daysPlayed: 27 })).toEqual(a);
+    expect(grassBlades(10, 20, { ...ctx, uniqueId: 1 })).not.toEqual(a);
+    const front = grassBlades(10, 20, { ...ctx, hasFrontTile: () => true });
+    expect(front.map((b) => b.offset2 + 7)).toEqual(a.map((b) => b.offset2));
+    for (const b of a) {
+      expect(b.whichWeed).toBeGreaterThanOrEqual(0);
+      expect(b.whichWeed).toBeLessThan(3);
+    }
+    const ops = drawOps({ kind: "grass", x: 1, y: 1, grassType: 1 }, data, "spring", ctx);
+    expect(ops).toHaveLength(3);
+    expect(ops[0]).toMatchObject({ texture: "TerrainFeatures/grass", sw: 15, sh: 20, sy: 0 });
   });
 });

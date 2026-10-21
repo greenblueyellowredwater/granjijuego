@@ -3,7 +3,9 @@ import { contentUrl, type Manifest, type Season } from "../content.ts";
 import { queueTilemap, RenderedMap } from "../render/tilemap.ts";
 import { FarmerAnimator } from "../world/farmer-animation.ts";
 import { Location, TILE } from "../world/location.ts";
-import { drawOps, solidRect, spawnFromPaths, treeTexture, type DrawOp, type TerrainData } from "../world/terrain.ts";
+import { DotNetRandom } from "../world/dotnet-random.ts";
+import { locationEntities, type GameState, type StateStore } from "../world/state.ts";
+import { drawOps, generateLocationObjects, solidRect, treeTexture, type DrawOp, type GrassContext, type TerrainData } from "../world/terrain.ts";
 import {
   centerTile,
   collides,
@@ -43,6 +45,8 @@ export interface WorldData {
   locations: LocationsData;
   start: WorldStart;
   terrain: TerrainData;
+  state: GameState;
+  store: StateStore;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
 }
@@ -108,7 +112,7 @@ export class World extends Phaser.Scene {
     }
     if (!this.textures.exists(SHADOW_TEXTURE)) this.load.image(SHADOW_TEXTURE, contentUrl(SHADOW_TEXTURE, "png"));
     if (!this.cache.json.exists(FARMER_TABLES)) this.load.json(FARMER_TABLES, contentUrl(FARMER_TABLES, "json"));
-    const textures = new Set(["LooseSprites/Cursors", "LooseSprites/Cursors_1_6", "Maps/springobjects", "TileSheets/bushes"]);
+    const textures = new Set(["LooseSprites/Cursors", "LooseSprites/Cursors_1_6", "Maps/springobjects", "TileSheets/bushes", "TerrainFeatures/grass"]);
     for (const info of Object.values(this.params.terrain.wildTrees)) {
       const t = treeTexture(info, this.params.season);
       if (t) textures.add(t);
@@ -117,10 +121,19 @@ export class World extends Phaser.Scene {
   }
 
   private spawnTerrain() {
-    const outdoors = String(this.location.props.Outdoors ?? "").toUpperCase().startsWith("T");
-    const entities = spawnFromPaths(this.location, this.params.season, outdoors);
+    const { state, store } = this.params;
+    const { entities, created } = locationEntities(state, this.location.name, () =>
+      generateLocationObjects(this.location, state.season, new DotNetRandom(Math.floor(Math.random() * 2147483647))),
+    );
+    if (created) store.save(state);
     this.location.setSolids(entities.map(solidRect).filter((r) => r !== null));
-    for (const e of entities) for (const op of drawOps(e, this.params.terrain, this.params.season)) this.addDrawOp(op);
+    const grass: GrassContext = {
+      uniqueId: state.uniqueId,
+      daysPlayed: state.daysPlayed,
+      outdoors: String(this.location.props.Outdoors ?? "").toUpperCase().startsWith("T"),
+      hasFrontTile: (x, y) => this.location.tile("Front", x, y) !== 0,
+    };
+    for (const e of entities) for (const op of drawOps(e, this.params.terrain, this.params.season, grass)) this.addDrawOp(op);
   }
 
   private addDrawOp(op: DrawOp) {

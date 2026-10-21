@@ -80,6 +80,25 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
+    "conserva el mundo generado al recargar y lo cambia con Nueva partida",
+    async (page) => {
+      const readState = () => page.evaluate(() => JSON.parse(localStorage.getItem("stardew-ts/partida") ?? "null"));
+      await page.goto(`${BASE}/?map=Town&x=43&y=57`);
+      await waitStatus(page, /Town .* tile/);
+      const first = await readState();
+      if (!first?.locations?.Town?.entities?.length) throw new Error("No se guardó lo generado en Town");
+      await page.reload();
+      await waitStatus(page, /Town .* tile/);
+      const second = await readState();
+      if (JSON.stringify(second.locations.Town) !== JSON.stringify(first.locations.Town) || second.uniqueId !== first.uniqueId) throw new Error("Al recargar cambió el mundo");
+      page.once("dialog", (d) => d.accept());
+      await Promise.all([page.waitForNavigation(), page.click("#new-game")]);
+      await waitStatus(page, /Town .* tile/);
+      const third = await readState();
+      if (third.uniqueId === first.uniqueId) throw new Error("Nueva partida no cambió el ID de partida");
+    },
+  ],
+  [
     "no atraviesa paredes",
     async (page) => {
       await page.goto(`${BASE}/?map=SeedShop&x=6&y=27`);

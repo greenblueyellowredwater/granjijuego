@@ -1,5 +1,5 @@
 import { TILE, type Location } from "./location.ts";
-import { SeededRandom } from "./rng.ts";
+import { createRandom, DotNetRandom } from "./dotnet-random.ts";
 import type { Rect } from "./movement.ts";
 
 export const SEASON_INDEX = { spring: 0, summer: 1, fall: 2, winter: 3 } as const;
@@ -58,6 +58,8 @@ const CURSORS = "LooseSprites/Cursors";
 const CURSORS_16 = "LooseSprites/Cursors_1_6";
 const SPRING_OBJECTS = "Maps/springobjects";
 const BUSHES = "TileSheets/bushes";
+const GRASS = "TerrainFeatures/grass";
+const GRASS_WEEDS = 3;
 const TREE_SHADOW_LEAFY = { sx: 663, sy: 1011, sw: 41, sh: 30 };
 const TREE_SHADOW_BARE = { sx: 469, sy: 298, sw: 42, sh: 31 };
 
@@ -73,9 +75,37 @@ function normalizeTreeId(id: string) {
   return id === "4" ? "1" : id === "5" ? "2" : id;
 }
 
-export function spawnFromPaths(loc: Location, season: SeasonName, outdoors: boolean, rng = new SeededRandom(loc.name)): Entity[] {
+export function loadsPathsObjects(loc: Location) {
+  const flag = (name: string) => String(loc.props[name] ?? "").toUpperCase().startsWith("T");
+  return flag("Outdoors") || loc.name === "BathHouse_Entry" || flag("TreatAsOutdoors") || "forceLoadObjects" in loc.props;
+}
+
+export function treesFromMapProperty(loc: Location, onInvalid?: (msg: string) => void): Entity[] {
+  const raw = loc.props.Trees;
+  if (typeof raw !== "string" || !raw.trim()) return [];
+  const parts = raw.trim().split(/\s+/);
+  const out: Entity[] = [];
+  for (let i = 0; i + 3 <= parts.length; i += 3) {
+    const [x, y, type] = parts.slice(i, i + 3).map(Number);
+    if (![x, y, type].every(Number.isInteger)) {
+      onInvalid?.(parts.slice(i, i + 3).join(" "));
+      continue;
+    }
+    out.push({ kind: "tree", x, y, treeId: String(type + 1), stage: 5, flipped: false });
+  }
+  return out;
+}
+
+export function generateLocationObjects(loc: Location, season: SeasonName, rng: DotNetRandom): Entity[] {
+  const trees = treesFromMapProperty(loc, (g) => console.warn(`Trees inválido en ${loc.name}: '${g}'`));
+  if (!loadsPathsObjects(loc)) return trees;
+  const outdoors = String(loc.props.Outdoors ?? "").toUpperCase().startsWith("T");
+  return spawnFromPaths(loc, season, outdoors, rng, trees);
+}
+
+export function spawnFromPaths(loc: Location, season: SeasonName, outdoors: boolean, rng: DotNetRandom, existing: Entity[] = []): Entity[] {
   const objects = new Map<string, Entity>();
-  const features = new Map<string, Entity>();
+  const features = new Map<string, Entity>(existing.map((e) => [`${e.x},${e.y}`, e]));
   const large: Entity[] = [];
   const clumps: Extract<Entity, { kind: "clump" }>[] = [];
   const key = (x: number, y: number) => `${x},${y}`;
@@ -87,14 +117,14 @@ export function spawnFromPaths(loc: Location, season: SeasonName, outdoors: bool
       if (index in WILD_TREE_BY_INDEX || index === 34) {
         if (features.has(k) || objects.has(k)) continue;
         if (index !== 34) {
-          features.set(k, { kind: "tree", x, y, treeId: normalizeTreeId(WILD_TREE_BY_INDEX[index]), stage: 5, flipped: rng.bool() });
+          features.set(k, { kind: "tree", x, y, treeId: normalizeTreeId(WILD_TREE_BY_INDEX[index]), stage: 5, flipped: rng.nextBool() });
           continue;
         }
         const raw = loc.tileProps("Paths", x, y)?.SpawnTree;
         const parts = typeof raw === "string" ? raw.trim().split(/\s+/) : [];
         if (parts.length < 2) continue;
         const stage = parts[2] !== undefined && Number.isInteger(+parts[2]) && +parts[2] > -1 ? +parts[2] : undefined;
-        if (parts[0].toLowerCase() === "wild") features.set(k, { kind: "tree", x, y, treeId: normalizeTreeId(parts[1]), stage: stage ?? 5, flipped: rng.bool() });
+        if (parts[0].toLowerCase() === "wild") features.set(k, { kind: "tree", x, y, treeId: normalizeTreeId(parts[1]), stage: stage ?? 5, flipped: rng.nextBool() });
         else if (parts[0].toLowerCase() === "fruit") features.set(k, { kind: "fruitTree", x, y, treeId: parts[1], stage: stage ?? 4 });
         continue;
       }
@@ -113,13 +143,13 @@ export function spawnFromPaths(loc: Location, season: SeasonName, outdoors: bool
         const overlaps = clumps.some((c) => x * TILE + 1 < (c.x + c.w) * TILE && c.x * TILE < x * TILE + 63 && y * TILE + 1 < (c.y + c.h) * TILE && c.y * TILE < y * TILE + 63);
         if (!overlaps) features.set(k, { kind: "grass", x, y, grassType: index === 36 ? 7 : 1 });
       } else if (index === 23) {
-        if (!features.has(k)) features.set(k, { kind: "tree", x, y, treeId: String(rng.int(1, 4)), stage: rng.int(2, 4), flipped: rng.bool() });
+        if (!features.has(k)) features.set(k, { kind: "tree", x, y, treeId: String(rng.next(1, 4)), stage: rng.next(2, 4), flipped: rng.nextBool() });
       } else if (index in BUSH_BY_INDEX) {
         if (features.has(k)) continue;
         const size = BUSH_BY_INDEX[index];
         const townBush = loc.name === "Town" && size <= 2 && x % 5 !== 0;
         const drawShadow = !loc.tile("Front", x, y) && size !== 3;
-        large.push({ kind: "bush", x, y, size, flipped: rng.bool(), townBush, drawShadow });
+        large.push({ kind: "bush", x, y, size, flipped: rng.nextBool(), townBush, drawShadow });
       }
     }
   }
@@ -165,7 +195,47 @@ function standardShadow(cx: number, cy: number, depth: number): DrawOp {
   return { texture: STANDARD_SHADOW, sx: 0, sy: 0, sw: 12, sh: 7, x: cx - 24, y: cy - 12, depth, flip: false };
 }
 
-export function drawOps(e: Entity, data: TerrainData, season: SeasonName): DrawOp[] {
+export interface GrassContext {
+  uniqueId: number;
+  daysPlayed: number;
+  outdoors: boolean;
+  hasFrontTile: (x: number, y: number) => boolean;
+}
+
+export function grassSourceOffset(grassType: number, season: SeasonName, outdoors: boolean) {
+  const s = SEASON_INDEX[season];
+  switch (grassType) {
+    case 1:
+      return s === 3 ? (outdoors ? 80 : 0) : s * 20;
+    case 2:
+      return 60;
+    case 3:
+      return 80;
+    case 4:
+      return 100;
+    case 7:
+      return s === 3 ? (outdoors ? 220 : 160) : 160 + s * 20;
+    default:
+      return (grassType + 1) * 20;
+  }
+}
+
+export function grassBlades(x: number, y: number, ctx: GrassContext) {
+  const r = createRandom(ctx.uniqueId, ctx.daysPlayed / 28, x * 7, y * 11, 0);
+  const front = ctx.hasFrontTile(x, y);
+  return Array.from({ length: 4 }, () => {
+    const whichWeed = r.next(3);
+    const offset1 = r.next(-2, 3);
+    const offset2 = r.next(-2, 3) + (front ? -7 : 0);
+    const offset3 = r.next(-2, 3);
+    const offset4 = r.next(-2, 3) + (front ? -7 : 0);
+    const flip = r.nextBool();
+    r.nextDouble();
+    return { whichWeed, offset1, offset2, offset3, offset4, flip };
+  });
+}
+
+export function drawOps(e: Entity, data: TerrainData, season: SeasonName, grass?: GrassContext): DrawOp[] {
   const s = SEASON_INDEX[season];
   const px = e.x * TILE, py = e.y * TILE;
   switch (e.kind) {
@@ -211,6 +281,16 @@ export function drawOps(e: Entity, data: TerrainData, season: SeasonName): DrawO
       const boxCenterY = py + TILE / 2;
       ops.push({ texture: BUSHES, ...src, x: px, y: py + TILE - yOff - 128, depth: (boxCenterY + 48) / 10000 - e.x / 1e6, flip: e.flipped });
       return ops;
+    }
+    case "grass": {
+      if (!grass) return [];
+      const blades = grassBlades(e.x, e.y, grass);
+      const sy = grassSourceOffset(e.grassType, season, grass.outdoors);
+      return blades.slice(0, GRASS_WEEDS).map((b, i) => {
+        const gx = px + (i % 2) * 32 + b.offset3 * 4 - 4 + 30;
+        const gy = py + Math.trunc(i / 2) * 32 + b.offset4 * 4 + 40;
+        return { texture: GRASS, sx: b.whichWeed * 15, sy, sw: 15, sh: 20, x: gx - 30, y: gy - 70, depth: (gy + 16 - 20) / 10000 + gx / 1e7, flip: b.flip };
+      });
     }
     default:
       return [];

@@ -3,6 +3,7 @@ import { contentUrl, loadManifest, SEASONS, type Manifest, type Season } from ".
 import { MapViewer } from "./scenes/MapViewer.ts";
 import { World, type LocationsData } from "./scenes/World.ts";
 import type { TerrainData } from "./world/terrain.ts";
+import { localStore } from "./world/state.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -69,6 +70,15 @@ async function boot() {
   ];
   const terrain: TerrainData = { wildTrees, objects, bushTextureWidth: manifest.textures["TileSheets/bushes"]?.width ?? 128 };
   $("status").textContent = `Stardew Valley ${manifest.gameVersion} · ?mode=viewer para el visor de mapas`;
+  const store = localStore();
+  const state = store.load();
+  const newGame = $<HTMLButtonElement>("new-game");
+  newGame.hidden = false;
+  newGame.onclick = () => {
+    if (!confirm("¿Empezar una partida nueva? Se pierde el mundo generado actual.")) return;
+    store.reset();
+    location.reload();
+  };
   const x = params.get("x"), y = params.get("y");
   game.scene.add("World", World, true, {
     manifest,
@@ -76,6 +86,8 @@ async function boot() {
     locations,
     start: { location: map, x: x === null ? undefined : +x, y: y === null ? undefined : +y },
     terrain,
+    state,
+    store,
     onStatus: status,
     onEnter: (name: string, tile: { x: number; y: number }) => {
       const select = $<HTMLSelectElement>("map");

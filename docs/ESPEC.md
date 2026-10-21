@@ -66,7 +66,13 @@ Observado (destinos de llamada en el IL):
 - `CreateDaySaveRandom` siembra con `Stats.DaysPlayed` (más el ID de la partida, a confirmar).
 - `Crop.newDay` y `HoeDirt.dayUpdate` consumen `Random.Next` / `NextBool`.
 
-Hace falta: (a) el `System.Random` sembrado de .NET (generador sustractivo de Knuth, público); (b) xxHash32; (c) una spec, sistema por sistema, de qué entra en cada semilla.
+Implementado en `src/world/dotnet-random.ts`, con estos pasos:
+1. `CreateRandomSeed` reduce cada argumento a `(int)(v mod 2147483647)`.
+2. Empaqueta los 5 enteros en 20 bytes little-endian.
+3. Calcula xxHash32 con semilla 0, que se lee como `Int32` (`BitConverter`); se usa la librería `System.Data.HashFunction.xxHash` que trae el juego.
+4. Siembra un `System.Random` (algoritmo sustractivo de Knuth de .NET).
+
+Lo verifican vectores de .NET (`Random(0)`: 1559595546, 1755192844, 1649316166) y de xxHash32. Falta especificar, sistema por sistema, qué entra en cada semilla.
 
 ## 6. Arquitectura del runtime
 
@@ -243,7 +249,11 @@ Fuente: `GameLocation.loadObjects`, `loadPathsLayerObjectsInArea`, `TryGetTreeId
 | 23 | Árbol silvestre de tipo al azar entre 1 y 3, etapa al azar entre 2 y 3 |
 | 24 / 25 / 26 / 33 | Arbusto de tamaño 2 / 1 / 0 / 4 |
 
-Las elecciones al azar usan el RNG global del juego, que no es reproducible. Acá se usa un RNG sembrado por location para que el resultado sea estable.
+**Azar y persistencia, como en el original.**
+- **Cuándo se genera:** al crear la partida (`Game1.random` es un `System.Random()` sin semilla en `Game1..cctor`), así que el resultado cambia en cada partida nueva y después persiste con el guardado. Acá se genera la primera vez que se visita cada location, con la estación de la partida (primavera, día 1), y se persiste en el estado de partida (`localStorage`). El botón "Nueva partida" lo descarta.
+- **En qué mapas:** solo si la location es exterior (`Outdoors`), es `BathHouse_Entry`, tiene `TreatAsOutdoors` o tiene `forceLoadObjects`.
+- **Árboles previos:** antes de `Paths` se cargan los de la propiedad de mapa `Trees` (tripletas `x y tipo`, que crean el árbol `tipo+1` en etapa 5). `LoadTreesFrom` solo se usa en mapas de festival y queda pendiente.
+- **Elegir entre opciones:** `Choose` con 2 opciones usa `NextDouble() < 0,5`; con 3 usa `Next(3)`. `NextBool` es `NextDouble() < 0,5`.
 
 **Árbol** (adulto, etapa ≥ 5):
 - Textura: la primera entrada de `Data/WildTrees[id].Textures` cuya estación coincida, o si no la que no tiene estación.
@@ -275,7 +285,13 @@ Las elecciones al azar usan el RNG global del juego, que no es reproducible. Ac�
 
 **Profundidad del granjero** (`Farmer.getDrawLayer`): `centroY_caja/10000`. Todas estas profundidades se ordenan juntas entre `Buildings` y `Front`. Las sombras del granjero van debajo de todo ese grupo.
 
-Pendiente: dibujo del pasto (`Grass.draw`) y de los árboles frutales (se generan y se registran, pero todavía no se dibujan), y las fuentes previas a `Paths` en `loadObjects` (propiedad de mapa `Trees`, objetos y muebles iniciales).
+**Pasto** (`Grass.setUpRandom`, `loadSprite`, `draw`):
+- **Azar:** cada mata usa `CreateRandom(IDdePartida, díasJugados/28, x·7, y·11, 0)`, que cambia cada 28 días. Se sortean 4 entradas, cada una en este orden: `whichWeed = Next(3)`, `off1..off4 = Next(−2,3)` (a `off2` y `off4` se les resta 7 si hay un tile `Front`), `flip = NextBool` y un `NextDouble` para el temblor.
+- **Origen:** el rectángulo es `(whichWeed·15, desplazamiento, 15, 20)` de `TerrainFeatures/grass`. El desplazamiento es 0/20/40 en el tipo 1, y en invierno 80 al aire libre o 0 bajo techo; 60/80/100 en los tipos 2/3/4; 160/180/200/220 en el tipo 7; y `(tipo+1)·20` en el resto.
+- **Posición:** las matas `i < numberOfWeeds` (3 al generarse) se ubican en `tile·64 + ((i mod 2)·32 + off3·4 + 26, ⌊i/2⌋·32 + off4·4 + 40)`, con origen `(7,5; 17,5)` a escala 4.
+- **Profundidad:** `(y − 4)/10000 + x/10⁷`.
+
+Los árboles frutales nunca aparecen en mapas base (ningún mapa usa `SpawnTree`), así que su dibujo queda pendiente sin afectar a una partida nueva. También quedan pendientes los objetos y muebles iniciales de otras fuentes (por ejemplo los de la casa) y el forraje (`<estación>_Objects`).
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

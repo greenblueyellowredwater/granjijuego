@@ -10,7 +10,8 @@
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
     "build:wasm": "cargo build --release --target wasm32-unknown-unknown --manifest-path native/xnb-lzx/Cargo.toml && cp native/xnb-lzx/target/wasm32-unknown-unknown/release/xnb_lzx.wasm tools/wasm/",
-    "e2e": "tsx test/e2e/smoke.ts"
+    "e2e": "tsx test/e2e/smoke.ts",
+    "shots": "tsx test/e2e/shots.ts"
   },
   "keywords": [],
   "author": "",
