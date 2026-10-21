@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>stardew-ts</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #111; color: #ddd; font: 13px/1.4 ui-monospace, monospace; overflow: hidden; }
+      #hud { position: fixed; top: 8px; left: 8px; z-index: 2; background: #000a; padding: 8px 10px; border-radius: 6px; max-width: 420px; }
+      #hud select, #hud button { font: inherit; }
+      #props { white-space: pre-wrap; color: #9cf; margin-top: 6px; max-height: 40vh; overflow: auto; }
+      #missing { padding: 24px; max-width: 640px; }
+      code { color: #fc6; }
+    </style>
+  </head>
+  <body>
+    <div id="hud" hidden>
+      <div>
+        <select id="map"></select>
+        <select id="season">
+          <option>spring</option><option>summer</option><option>fall</option><option>winter</option>
+        </select>
+      </div>
+      <div id="status"></div>
+      <div id="props"></div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
