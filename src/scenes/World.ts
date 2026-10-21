@@ -3,6 +3,7 @@ import { contentUrl, type Manifest, type Season } from "../content.ts";
 import { queueTilemap, RenderedMap } from "../render/tilemap.ts";
 import { FarmerAnimator } from "../world/farmer-animation.ts";
 import { Location, TILE } from "../world/location.ts";
+import { drawOps, solidRect, spawnFromPaths, treeTexture, type DrawOp, type TerrainData } from "../world/terrain.ts";
 import {
   centerTile,
   collides,
@@ -41,6 +42,7 @@ export interface WorldData {
   season: Season;
   locations: LocationsData;
   start: WorldStart;
+  terrain: TerrainData;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
 }
@@ -106,6 +108,27 @@ export class World extends Phaser.Scene {
     }
     if (!this.textures.exists(SHADOW_TEXTURE)) this.load.image(SHADOW_TEXTURE, contentUrl(SHADOW_TEXTURE, "png"));
     if (!this.cache.json.exists(FARMER_TABLES)) this.load.json(FARMER_TABLES, contentUrl(FARMER_TABLES, "json"));
+    const textures = new Set(["LooseSprites/Cursors", "LooseSprites/Cursors_1_6", "Maps/springobjects", "TileSheets/bushes"]);
+    for (const info of Object.values(this.params.terrain.wildTrees)) {
+      const t = treeTexture(info, this.params.season);
+      if (t) textures.add(t);
+    }
+    for (const t of textures) if (!this.textures.exists(t) && t in this.params.manifest.textures) this.load.image(t, contentUrl(t, "png"));
+  }
+
+  private spawnTerrain() {
+    const outdoors = String(this.location.props.Outdoors ?? "").toUpperCase().startsWith("T");
+    const entities = spawnFromPaths(this.location, this.params.season, outdoors);
+    this.location.setSolids(entities.map(solidRect).filter((r) => r !== null));
+    for (const e of entities) for (const op of drawOps(e, this.params.terrain, this.params.season)) this.addDrawOp(op);
+  }
+
+  private addDrawOp(op: DrawOp) {
+    if (!this.textures.exists(op.texture)) return;
+    const tex = this.textures.get(op.texture);
+    const frame = `${op.sx},${op.sy},${op.sw},${op.sh}`;
+    if (!tex.has(frame)) tex.add(frame, 0, op.sx, op.sy, op.sw, op.sh);
+    this.add.image(op.x, op.y, op.texture, frame).setOrigin(0, 0).setScale(PIXEL_SCALE).setFlipX(op.flip).setDepth(this.rendered.spriteDepth(op.depth));
   }
 
   create() {
@@ -117,16 +140,16 @@ export class World extends Phaser.Scene {
     this.rendered = new RenderedMap(this, this.mapPath, this.params.manifest, this.params.season, PIXEL_SCALE);
     this.location = new Location(start.location, this.rendered.data);
     this.featureYOffset = this.cache.json.get(FARMER_TABLES)?.featureYOffsetPerFrame ?? [];
+    this.spawnTerrain();
 
     const spawn = this.spawnTile(start);
     const pos = positionForTile(spawn.x, spawn.y);
     this.body = { x: pos.x, y: pos.y, facing: start.facing ?? Facing.Down };
     this.params.onEnter?.(start.location, spawn);
 
-    const depth = this.rendered.characterDepth;
-    this.shadow = this.add.image(0, 0, SHADOW_TEXTURE).setDepth(depth - 0.02);
-    this.bodySprite = this.add.image(0, 0, FARMER_TEXTURE, 0).setOrigin(0, 0).setScale(PIXEL_SCALE).setDepth(depth);
-    this.armsSprite = this.add.image(0, 0, FARMER_TEXTURE, ARM_OFFSET_COLUMNS).setOrigin(0, 0).setScale(PIXEL_SCALE).setDepth(depth + 0.01);
+    this.shadow = this.add.image(0, 0, SHADOW_TEXTURE);
+    this.bodySprite = this.add.image(0, 0, FARMER_TEXTURE, 0).setOrigin(0, 0).setScale(PIXEL_SCALE);
+    this.armsSprite = this.add.image(0, 0, FARMER_TEXTURE, ARM_OFFSET_COLUMNS).setOrigin(0, 0).setScale(PIXEL_SCALE);
 
     const cam = this.cameras.main;
     cam.setZoom(1).setBackgroundColor("#000").setRoundPixels(true);
@@ -202,7 +225,11 @@ export class World extends Phaser.Scene {
     this.armsSprite.setFrame(frame + ARM_OFFSET_COLUMNS).setPosition(x, y).setFlipX(f.flip);
     const shrink = this.running && this.animator.animationIndexInLoop > 1 ? Math.abs(this.featureYOffset[f.frame] ?? 0) * 0.5 : 0;
     this.shadow.setPosition(this.body.x + 32, this.body.y + 24).setScale(PIXEL_SCALE - shrink);
-    this.shadow.setDepth(shadowAboveBuildings(this.location, this.body) ? this.rendered.characterDepth - 0.02 : this.rendered.belowBuildingsDepth);
+    this.shadow.setDepth(shadowAboveBuildings(this.location, this.body) ? this.rendered.spriteDepth(0) - 0.01 : this.rendered.belowBuildingsDepth);
+    const box = farmerBox(this.body.x, this.body.y);
+    const layer = this.rendered.spriteDepth((box.y + box.h / 2) / 10000);
+    this.bodySprite.setDepth(layer);
+    this.armsSprite.setDepth(layer + 1e-7);
   }
 
   private updateCamera() {

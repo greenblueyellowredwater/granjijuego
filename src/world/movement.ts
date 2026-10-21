@@ -47,7 +47,7 @@ export function rectCollides(loc: Location, r: Rect) {
   const xs = [Math.floor(r.x / TILE), Math.floor((r.x + r.w - 1) / TILE)];
   const ys = [Math.floor(r.y / TILE), Math.floor((r.y + r.h - 1) / TILE)];
   for (const ty of ys) for (const tx of xs) if (loc.blocksFarmer(tx, ty)) return true;
-  return false;
+  return loc.intersectsSolid(r);
 }
 
 export function collides(loc: Location, x: number, y: number) {

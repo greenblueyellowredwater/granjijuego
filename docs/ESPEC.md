@@ -225,6 +225,58 @@ Si ninguno cumple, la sombra va antes de `Buildings` y queda tapada por paredes 
 - `LockedDoorWarp` ignora el horario hasta que exista el reloj (hito 3). `Door`, `TouchAction` y el resto de las acciones solo se informan en el HUD.
 - El granjero se dibuja solo con cuerpo y brazos base; falta la spec `FarmerRenderer` (ropa, pelo, piel).
 
+## Spec S3: objetos y vegetación de la capa `Paths`
+
+Fuente: `GameLocation.loadObjects`, `loadPathsLayerObjectsInArea`, `TryGetTreeIdForTile`, `getWeedForSeason`, y los métodos `draw`, `getBoundingBox` e `isPassable` de `Tree`, `Bush`, `Object` y `ResourceClump`. Se ejecuta **una vez, al crear la location**; después lo generado persiste con el guardado.
+
+**Recorrido.** Se recorre la capa `Paths` por columnas (x externo, y interno). El índice es el del tile dentro de la hoja de `Paths`. No se genera nada donde ya hay un objeto o terrain feature.
+
+| Índice | Resultado |
+|---|---|
+| 9 / 10 / 11 / 12 / 31 / 32 | Árbol silvestre `1`/`2`/`3`/`6`/`9`/`8` (en invierno, `4` y `5` en vez de `1` y `2`, que el constructor normaliza a `1` y `2` (?)), etapa 5 |
+| 34 | Árbol según la propiedad del tile `SpawnTree: wild\|fruit <id> [etapaAlCargar] [etapaAlRebrotar]`; etapa por defecto 5 (silvestre) o 4 (frutal) |
+| 13 / 14 / 15 | Maleza de la estación (primavera `784/674/675`, verano `785/676/677`, otoño `786/678/679`), salvo al aire libre en invierno |
+| 16 / 17 | Piedra `343` o `450` |
+| 18 | Rama `294` o `295` |
+| 19 / 20 / 21 | Grupo de recursos 2×2 con índice `602` / `672` / `600`, que borra los terrain features de abajo |
+| 22 / 36 | Pasto tipo 1 / 7, con 3 matas (no se genera si se superpone con un grupo de recursos) |
+| 23 | Árbol silvestre de tipo al azar entre 1 y 3, etapa al azar entre 2 y 3 |
+| 24 / 25 / 26 / 33 | Arbusto de tamaño 2 / 1 / 0 / 4 |
+
+Las elecciones al azar usan el RNG global del juego, que no es reproducible. Acá se usa un RNG sembrado por location para que el resultado sea estable.
+
+**Árbol** (adulto, etapa ≥ 5):
+- Textura: la primera entrada de `Data/WildTrees[id].Textures` cuya estación coincida, o si no la que no tiene estación.
+- Caja: el tile. Bloquea el paso salvo en la etapa 0.
+- Sombra: de `Cursors (663,1011,41,30)` si es frondoso en la estación actual (`IsLeafy`, `IsLeafyInWinter`, `IsLeafyInFall`), o de `Cursors_1_6 (469,298,42,31)` si no. Se dibuja en `(tx·64−51, ty·64−16)`, escala 4, profundidad 1e−6.
+- Copa: `(0,0,48,96)` de la textura (48 = con semilla, 96 = con musgo), con la esquina en `(tx·64−64, ty·64−320)`. Profundidad `((ty+1)·64 + 2)/10000 − tx/10⁶`. Espejado al azar.
+- Tronco: `(32,96,16,32)` en `(tx·64, ty·64−64)`, profundidad `(ty+1)·64/10000`.
+- Árboles jóvenes (etapa < 5): `(32|0|16, 128, 16, 16)` para las etapas 0 / 1 / 2, o `(0, 96, 16, 32)` para la 3 y la 4. El sprite se dibuja centrado horizontalmente en el tile y apoyado en su borde inferior.
+
+**Arbusto** (`TileSheets/bushes`; tamaño efectivo: el 3 cuenta como 0 y el 4 como 1):
+- Caja: ancho 64 / 128 / 192 según tamaño 0 / 1 / 2, alto 64. Nunca se atraviesa.
+- En Town, los de tamaño 0 a 2 con `tx mod 5 ≠ 0` son "de pueblo".
+- Rectángulo de origen según tamaño (estación: 0 primavera … 3 invierno; offset de flor 0 mientras no haya reloj):
+  - 0: `(est·32 + offset·16, 224, 16, 32)`;
+  - 1 de pueblo: `(est·32, 96, 32, 32)`;
+  - 1 normal: con `i = est·64 + offset·32`, `(i mod anchoTextura, ⌊i/anchoTextura⌋·48, 32, 48)`;
+  - 2: de pueblo en primavera o verano `(48,176,48,48)`; si no, primavera o verano `(0,128,48,48)`, otoño `(48,128,48,48)`, invierno `(0,176,48,48)`.
+- Dibujo: esquina en `(tx·64, (ty+1)·64 − yOff − 128)`, donde `yOff = 64` salvo en tamaño 0, en el mediano de pueblo y en el tamaño 4 (en esos, 0). Profundidad `(centroY_caja + 48)/10000 − tx/10⁶`. Espejado al azar.
+- Sombra (solo si no hay tile `Front` en su tile): tamaños ≥ 1 usan `Cursors (663,1011,41,30)` en `((tx + (ef=1 ? 0,5 : 1))·64 − 51, ty·64 − 16)`; tamaño 0 usa la sombra estándar centrada en `(tx·64+32, ty·64+60)`. Profundidad 1e−6.
+
+**Objeto** (maleza, piedra, rama):
+- Sprite: `Maps/springobjects`, índice `SpriteIndex` de `Data/Objects`, rectángulo `(i mod 24 · 16, ⌊i/24⌋·16, 16, 16)`, en `(tx·64, ty·64)`.
+- Profundidad: `(ty·64+32)/10000` si bloquea el paso, `ty·64/10000` si se puede atravesar. La maleza, las piedras y las ramas bloquean.
+- Sombra estándar centrada en `(tx·64+32, ty·64+55)`, profundidad `((ty+1)·64)/15000`.
+
+**Grupo de recursos:** desde `Maps/springobjects`, rectángulo del índice con `ancho·16 × alto·16`, en `(tx·64, ty·64)`. Profundidad `((ty+1)·64)/10000 + tx/100000`. Caja de `ancho × alto` tiles, que no se atraviesa.
+
+**Colisión con el granjero:** además de las reglas de tiles, la caja choca si se superpone estrictamente con la caja de un árbol, arbusto, objeto o grupo de recursos que no se pueda atravesar.
+
+**Profundidad del granjero** (`Farmer.getDrawLayer`): `centroY_caja/10000`. Todas estas profundidades se ordenan juntas entre `Buildings` y `Front`. Las sombras del granjero van debajo de todo ese grupo.
+
+Pendiente: dibujo del pasto (`Grass.draw`) y de los árboles frutales (se generan y se registran, pero todavía no se dibujan), y las fuentes previas a `Paths` en `loadObjects` (propiedad de mapa `Trees`, objetos y muebles iniciales).
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:

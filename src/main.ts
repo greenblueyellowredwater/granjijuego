@@ -2,6 +2,7 @@ import Phaser from "phaser";
 import { contentUrl, loadManifest, SEASONS, type Manifest, type Season } from "./content.ts";
 import { MapViewer } from "./scenes/MapViewer.ts";
 import { World, type LocationsData } from "./scenes/World.ts";
+import type { TerrainData } from "./world/terrain.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -60,7 +61,13 @@ async function boot() {
     return;
   }
 
-  const locations = (await (await fetch(contentUrl("Data/Locations", "json"))).json()) as LocationsData;
+  const load = async (key: string) => (await fetch(contentUrl(key, "json"))).json();
+  const [locations, wildTrees, objects] = (await Promise.all([load("Data/Locations"), load("Data/WildTrees"), load("Data/Objects")])) as [
+    LocationsData,
+    TerrainData["wildTrees"],
+    TerrainData["objects"],
+  ];
+  const terrain: TerrainData = { wildTrees, objects, bushTextureWidth: manifest.textures["TileSheets/bushes"]?.width ?? 128 };
   $("status").textContent = `Stardew Valley ${manifest.gameVersion} · ?mode=viewer para el visor de mapas`;
   const x = params.get("x"), y = params.get("y");
   game.scene.add("World", World, true, {
@@ -68,6 +75,7 @@ async function boot() {
     season,
     locations,
     start: { location: map, x: x === null ? undefined : +x, y: y === null ? undefined : +y },
+    terrain,
     onStatus: status,
     onEnter: (name: string, tile: { x: number; y: number }) => {
       const select = $<HTMLSelectElement>("map");

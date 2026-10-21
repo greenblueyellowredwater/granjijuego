@@ -91,6 +91,10 @@ export class RenderedMap {
     this.belowBuildingsDepth = belowBuildingsDepth >= 0 ? belowBuildingsDepth : characterDepth - 0.5;
   }
 
+  spriteDepth(layerDepth: number) {
+    return this.characterDepth - 0.4 + layerDepth * 0.08;
+  }
+
   get widthInPixels() {
     return this.map.widthInPixels * this.scale;
   }

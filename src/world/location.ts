@@ -34,6 +34,13 @@ export interface TiledMap {
   layers: TiledLayer[];
 }
 
+export interface SolidRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 export interface Warp {
   fromX: number;
   fromY: number;
@@ -75,6 +82,7 @@ export class Location {
   private readonly layers = new Map<string, LayerIndex>();
   private readonly gidProps = new Map<number, Props>();
   private readonly warpIndex = new Map<string, Warp>();
+  private readonly solidIndex = new Map<string, SolidRect[]>();
 
   constructor(
     readonly name: string,
@@ -142,6 +150,31 @@ export class Location {
 
   get isFarm() {
     return this.name === "Farm";
+  }
+
+  setSolids(rects: SolidRect[]) {
+    this.solidIndex.clear();
+    for (const r of rects) {
+      for (let tx = Math.floor(r.x / TILE); tx <= Math.floor((r.x + r.w - 1) / TILE); tx++) {
+        for (let ty = Math.floor(r.y / TILE); ty <= Math.floor((r.y + r.h - 1) / TILE); ty++) {
+          const k = `${tx},${ty}`;
+          const list = this.solidIndex.get(k);
+          if (list) list.push(r);
+          else this.solidIndex.set(k, [r]);
+        }
+      }
+    }
+  }
+
+  intersectsSolid(r: SolidRect) {
+    for (let tx = Math.floor(r.x / TILE); tx <= Math.floor((r.x + r.w - 1) / TILE); tx++) {
+      for (let ty = Math.floor(r.y / TILE); ty <= Math.floor((r.y + r.h - 1) / TILE); ty++) {
+        for (const s of this.solidIndex.get(`${tx},${ty}`) ?? []) {
+          if (r.x < s.x + s.w && s.x < r.x + r.w && r.y < s.y + s.h && s.y < r.y + r.h) return true;
+        }
+      }
+    }
+    return false;
   }
 
   warpAt(x: number, y: number) {
