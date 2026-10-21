@@ -5,6 +5,8 @@ import { FarmerAnimator } from "../world/farmer-animation.ts";
 import { Location, TILE } from "../world/location.ts";
 import { DotNetRandom } from "../world/dotnet-random.ts";
 import { locationEntities, type GameState, type StateStore } from "../world/state.ts";
+import { buildWaterGrid, WATER_TEXTURE, waterColor, waterPieces, WaterState, type WaterGrid } from "../world/water.ts";
+import { DEPTH } from "../render/tilemap.ts";
 import {
   drawOps,
   generateLocationObjects,
@@ -102,6 +104,8 @@ export class World extends Phaser.Scene {
   private warping = false;
   private running = true;
   private fadingTrees: { rect: Rect; alpha: number; images: Phaser.GameObjects.Image[] }[] = [];
+  private water: { grid: WaterGrid; state: WaterState; tint: number; alpha: number; pool: Phaser.GameObjects.Image[] } | null = null;
+  private ticks = 0;
 
   constructor() {
     super("World");
@@ -115,6 +119,8 @@ export class World extends Phaser.Scene {
     this.accumulator = 0;
     this.animator = new FarmerAnimator();
     this.fadingTrees = [];
+    this.water = null;
+    this.ticks = 0;
   }
 
   preload() {
@@ -156,6 +162,40 @@ export class World extends Phaser.Scene {
     }
   }
 
+  private setupWater() {
+    const grid = buildWaterGrid(this.location);
+    if (!grid) return;
+    const color = waterColor(this.location.name, this.params.season);
+    const tint = (color.rgb[0] << 16) | (color.rgb[1] << 8) | color.rgb[2];
+    this.water = { grid, state: new WaterState(this.location.name === "Farm"), tint, alpha: color.alpha, pool: [] };
+  }
+
+  private drawWater() {
+    const w = this.water;
+    if (!w || !this.textures.exists(WATER_TEXTURE)) return;
+    const cam = this.cameras.main;
+    const x0 = Math.max(0, Math.floor(cam.scrollX / TILE) - 1), x1 = Math.min(w.grid.width - 1, Math.floor((cam.scrollX + cam.width) / TILE) + 1);
+    const y0 = Math.max(0, Math.floor(cam.scrollY / TILE) - 1), y1 = Math.min(w.grid.height - 1, Math.floor((cam.scrollY + cam.height) / TILE) + 2);
+    const tex = this.textures.get(WATER_TEXTURE);
+    let used = 0;
+    for (let ty = y0; ty <= y1; ty++) {
+      for (let tx = x0; tx <= x1; tx++) {
+        for (const piece of waterPieces(w.grid, w.state, tx, ty)) {
+          const frame = `water:${piece.sx},${piece.sy},${piece.sh}`;
+          if (!tex.has(frame)) tex.add(frame, 0, piece.sx, piece.sy, piece.sw, piece.sh);
+          let img = w.pool[used];
+          if (!img) {
+            img = this.add.image(0, 0, WATER_TEXTURE, frame).setOrigin(0, 0).setDepth(DEPTH.back + 0.5).setTint(w.tint).setAlpha(w.alpha);
+            w.pool.push(img);
+          }
+          img.setFrame(frame).setPosition(piece.x, piece.y).setVisible(true);
+          used++;
+        }
+      }
+    }
+    for (let i = used; i < w.pool.length; i++) w.pool[i].setVisible(false);
+  }
+
   private updateTreeFade() {
     const b = farmerBox(this.body.x, this.body.y);
     for (const t of this.fadingTrees) {
@@ -185,6 +225,7 @@ export class World extends Phaser.Scene {
     this.location = new Location(start.location, this.rendered.data);
     this.featureYOffset = this.cache.json.get(FARMER_TABLES)?.featureYOffsetPerFrame ?? [];
     this.spawnTerrain();
+    this.setupWater();
 
     const spawn = this.spawnTile(start);
     const pos = positionForTile(spawn.x, spawn.y);
@@ -258,6 +299,8 @@ export class World extends Phaser.Scene {
     const result = step(this.location, this.body, pressed, this.running, TICK_MS);
     this.animator.tick(this.body.facing, pressed.size > 0, this.running, pressed.size, TICK_MS);
     this.updateTreeFade();
+    this.ticks++;
+    this.water?.state.tick(TICK_MS, (this.ticks * 1000) / TICKS_PER_SECOND);
     if (result.warp) this.warpTo(result.warp.target, result.warp.toX, result.warp.toY);
   }
 
@@ -300,6 +343,7 @@ export class World extends Phaser.Scene {
     }
     this.placeSprites();
     this.updateCamera();
+    this.drawWater();
 
     const c = centerTile(this.body);
     const f = facingTile(this.body);

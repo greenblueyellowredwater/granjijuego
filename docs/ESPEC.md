@@ -115,6 +115,7 @@ Cambio de día: `NewDay` → `newDayAfterFade` → clima, `GameLocation.DayUpdat
 |---|---|---|
 | 1 | Importador + visor de mapas | **hecho** |
 | 2 | Caminar por el pueblo: colisión (`Passable`/Buildings), warps, cámara, sprite del granjero | **hecho** (spec S2) |
+| 2b | Vegetación y objetos de `Paths`, agua animada, orden de dibujo por lotes | **hecho** (specs S3 y S4) |
 | 3 | Reloj, días, estaciones, clima, RNG | |
 | 4 | Granja básica: azada, regadera, HoeDirt, cultivos, inventario, shipping | |
 | 5 | GameStateQuery, ItemQuery, tiendas, máquinas | |
@@ -289,6 +290,25 @@ Fuente: `GameLocation.loadObjects`, `loadPathsLayerObjectsInArea`, `TryGetTreeId
 - **Profundidad:** `(y − 4)/10000 + x/10⁷`.
 
 Los árboles frutales nunca aparecen en mapas base (ningún mapa usa `SpawnTree`), así que su dibujo queda pendiente sin afectar a una partida nueva. También quedan pendientes los objetos y muebles iniciales de otras fuentes (por ejemplo los de la casa) y el forraje (`<estación>_Objects`).
+
+## Spec S4: agua animada
+
+Fuente: `GameLocation.loadMap`, `updateWater`, `drawWater`, `drawWaterTile`, `resetSharedState` y `Beach.resetSharedState`.
+
+**Tiles de agua.** Solo hay capa de agua si la location es exterior, tiene la propiedad `indoorWater`, o es `Sewer` o `Submarine`; nunca en `Desert`. Un tile es agua si su tile de `Back` tiene la propiedad `Water` con cualquier valor. Con el valor `I` es agua pero no se dibuja.
+
+**Estado por location** (`updateWater`, una vez por tick con `ms = 16`):
+- `timer −= ms`; si `timer ≤ 0`, `índice = (índice + 1) mod 10` y `timer = 200`.
+- `posición += 0,1` en `Farm`; en el resto, `posición += (sin(msDelSegundo/1000) + 1) · 0,15`, donde `msDelSegundo` es la parte de milisegundos (0–999) del tiempo total de juego.
+- Si `posición ≥ 64`: `posición −= 64` y se invierte `flip`.
+
+**Dibujo** (después de `Back`, antes de las sombras y `Buildings`). Para cada tile visible de agua, sea `p = ⌊posición⌋` y `fila(n) = (n mod 2 ≠ 0) ≠ flip ? 128 : 0`:
+- El tile es "borde superior" si es la primera fila del mapa o el de arriba no es agua, y "borde inferior" si es la última fila o el de abajo no es agua.
+- Dibujo principal desde `LooseSprites/Cursors`, rectángulo `(índice·64, 2064 + fila(x+y) + (sup ? p : 0), 64, 64 − (sup ? p : 0))`, en `(x·64, y·64 − (sup ? 0 : p))`.
+- Si es borde inferior, además `(índice·64, 2064 + fila(x+y+1), 64, 64 − ⌊64 − posición⌋ − 1)` en `(x·64, (y+1)·64 − p)`.
+- Se dibuja a escala 1 (los cuadros de agua de `Cursors` ya miden 64 px), teñido con el color del agua.
+
+**Color del agua** (`resetSharedState`), con alfa 50 %: primavera (120,200,255), verano (60,240,255), otoño (255,130,200), invierno (130,80,255). En `Beach`, en verano de los días 12 a 14, (0,255,0) al 40 %. Son pendientes los colores propios de `Sewer`, `Caldera`, `MineShaft`, `VolcanoDungeon` e `IslandFarmCave`.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
