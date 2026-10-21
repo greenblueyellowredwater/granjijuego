@@ -200,18 +200,14 @@ Fuente: lectura del IL (`tools/clr/disasm.ts`) de los métodos citados en cada p
 
 **Sombra** (`Farmer.DrawShadow`). Textura `LooseSprites/shadow`, centrada en `(X+32, Y+24)`, a escala `4 − (corriendo y con índice de animación > 1 ? |featureYOffsetPerFrame[frame]|·0,5 : 0)`. Se dibuja justo debajo del granjero. `featureYOffsetPerFrame` es una tabla estática de 126 enteros que se obtiene de la DLL.
 
-**Orden de dibujo del mundo** (`Game1.DrawWorld`):
-1. Fondo.
-2. Capa `Back` y sus subcapas.
-3. Agua (`drawWater`).
-4. Decoraciones del piso.
-5. **Sombras normales.**
-6. Capa `Buildings` y sus subcapas.
-7. **Sombras "sobre edificios".**
-8. Personajes y objetos (`GameLocation.draw`, ordenados por profundidad).
-9. Capa `Front`, `drawAboveFrontLayer` y `AlwaysFront`.
-10. Clima.
-11. Iluminación.
+**Orden de dibujo del mundo** (`Game1.DrawWorld`, `xTile.Layers.Layer.DrawNormal`). Se dibuja en lotes de `SpriteBatch`:
+1. Fondo, capa `Back` y subcapas, agua y decoraciones del piso. Se dibujan sin ordenar.
+2. **Sombras normales**, luego `Buildings` y subcapas, sin ordenar. Así las sombras quedan tapadas por `Buildings`.
+3. **Lote ordenado por profundidad** (`SpriteSortMode.FrontToBack`, menor profundidad = más atrás): sombras "sobre edificios", personajes, árboles, objetos y arbustos (`GameLocation.draw`), **los tiles de `Front` y sus subcapas**, y `drawAboveFrontLayer`.
+   - Cada tile de la fila `r` tiene profundidad `((r+1)·64 + offset)/10000`. `Back` no se ordena (offset −1). Para `Front`, el offset de la subcapa `i` de `n` es `64 + 0,1·i/(n−1)`, o 64 si hay una sola.
+   - Consecuencia: un tile de `Front` tapa al granjero solo si el granjero está "detrás", es decir, si `centroY_caja < (r+2)·64`. Si está más abajo, el granjero se dibuja por delante.
+4. `AlwaysFront`, siempre encima, y `drawAboveAlwaysFrontLayer`.
+5. Clima, iluminación y HUD.
 
 **Sombra sobre `Buildings`** (`Game1.checkCharacterTilesForShadowDrawFlag`, `GameLocation.shouldShadowBeDrawnAboveBuildingsLayer`, `Farm.shouldShadowBeDrawnAboveBuildingsLayer`). Se dibuja después de `Buildings` si el granjero está en un puente, o si alguno de los tiles que cubre la caja, con el alto extendido 8 px (de `⌊izq/64⌋` a `⌊der/64⌋` y de `⌊arriba/64⌋` a `⌊abajo/64⌋`, con bordes exclusivos), cumple alguna de estas condiciones:
 - el tile de `Buildings` tiene `Passable`;
@@ -284,7 +280,7 @@ Fuente: `GameLocation.loadObjects`, `loadPathsLayerObjectsInArea`, `TryGetTreeId
 
 **Colisión con el granjero:** además de las reglas de tiles, la caja choca si se superpone estrictamente con la caja de un árbol, arbusto, objeto o grupo de recursos que no se pueda atravesar.
 
-**Profundidad del granjero** (`Farmer.getDrawLayer`): `centroY_caja/10000`. Todas estas profundidades se ordenan juntas entre `Buildings` y `Front`. Las sombras del granjero van debajo de todo ese grupo.
+**Profundidad del granjero** (`Farmer.getDrawLayer`): `centroY_caja/10000`. Se ordena en el lote 3 junto con los tiles de `Front`. Si su sombra va "sobre edificios", usa la misma profundidad menos 10⁻⁶.
 
 **Pasto** (`Grass.setUpRandom`, `loadSprite`, `draw`):
 - **Azar:** cada mata usa `CreateRandom(IDdePartida, díasJugados/28, x·7, y·11, 0)`, que cambia cada 28 días. Se sortean 4 entradas, cada una en este orden: `whichWeed = Next(3)`, `off1..off4 = Next(−2,3)` (a `off2` y `off4` se les resta 7 si hay un tile `Front`), `flip = NextBool` y un `NextDouble` para el temblor.

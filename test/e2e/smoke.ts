@@ -41,8 +41,7 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     async (page) => {
       await page.goto(`${BASE}/?map=Town&x=43&y=57`);
       await waitStatus(page, /Town .* tile 43,57/);
-      await hold(page, "w", 120);
-      await waitStatus(page, /Enfrente: LockedDoorWarp 6 29 SeedShop/);
+      await holdUntil(page, "w", /Enfrente: LockedDoorWarp 6 29 SeedShop/);
       await page.keyboard.press("x");
       await waitStatus(page, /SeedShop .* tile 6,29/);
       await settle();

@@ -270,9 +270,10 @@ export class World extends Phaser.Scene {
     this.armsSprite.setFrame(frame + ARM_OFFSET_COLUMNS).setPosition(x, y).setFlipX(f.flip);
     const shrink = this.running && this.animator.animationIndexInLoop > 1 ? Math.abs(this.featureYOffset[f.frame] ?? 0) * 0.5 : 0;
     this.shadow.setPosition(this.body.x + 32, this.body.y + 24).setScale(PIXEL_SCALE - shrink);
-    this.shadow.setDepth(shadowAboveBuildings(this.location, this.body) ? this.rendered.spriteDepth(0) - 0.01 : this.rendered.belowBuildingsDepth);
     const box = farmerBox(this.body.x, this.body.y);
-    const layer = this.rendered.spriteDepth((box.y + box.h / 2) / 10000);
+    const drawLayer = (box.y + box.h / 2) / 10000;
+    const layer = this.rendered.spriteDepth(drawLayer);
+    this.shadow.setDepth(shadowAboveBuildings(this.location, this.body) ? this.rendered.spriteDepth(drawLayer - 1e-6) : this.rendered.belowBuildingsDepth);
     this.bodySprite.setDepth(layer);
     this.armsSprite.setDepth(layer + 1e-7);
   }
