@@ -123,6 +123,14 @@ function nudgeAroundCorner(loc: Location, body: Body, box: Rect, next: Rect, dir
   }
 }
 
+export function shadowAboveBuildings(loc: Location, body: Body) {
+  const b = farmerBox(body.x, body.y);
+  const x0 = Math.floor(b.x / TILE), x1 = Math.floor((b.x + b.w) / TILE);
+  const y0 = Math.floor(b.y / TILE), y1 = Math.floor((b.y + b.h + 8) / TILE);
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) if (loc.shadowAboveBuildingsAt(x, y)) return true;
+  return false;
+}
+
 export function centerTile(body: Body) {
   const b = farmerBox(body.x, body.y);
   return { x: Math.floor((b.x + b.w / 2) / TILE), y: Math.floor((b.y + b.h / 2) / TILE) };

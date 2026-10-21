@@ -115,6 +115,35 @@ export class Location {
     return { ...this.gidProps.get(gid), ...this.layers.get(layer)!.own[`${x},${y}`] };
   }
 
+  tileIndexOnSheet(layer: string, x: number, y: number, sheet: string) {
+    const gid = this.tile(layer, x, y);
+    if (!gid) return -1;
+    const ts = this.map.tilesets.filter((t) => t.firstgid <= gid).sort((a, b) => b.firstgid - a.firstgid)[0];
+    return ts && ts.name === sheet ? gid - ts.firstgid : -1;
+  }
+
+  isWater(x: number, y: number) {
+    const back = this.tileProps("Back", x, y);
+    return !!back && "Water" in back;
+  }
+
+  shadowAboveBuildingsAt(x: number, y: number) {
+    if ("Passable" in (this.tileProps("Buildings", x, y) ?? {})) return true;
+    if (this.isWater(x, y)) {
+      const index = this.tileIndexOnSheet("Buildings", x, y, "Town");
+      if (index < 1004 || index > 1013) return true;
+    }
+    if (this.isFarm) {
+      const back = this.tileProps("Back", x, y);
+      if (back?.NoSpawn === "All" && back?.Type === "Wood") return true;
+    }
+    return false;
+  }
+
+  get isFarm() {
+    return this.name === "Farm";
+  }
+
   warpAt(x: number, y: number) {
     return this.warpIndex.get(`${x},${y}`);
   }

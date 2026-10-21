@@ -10,6 +10,7 @@ import {
   farmerBox,
   findOpenTile,
   positionForTile,
+  shadowAboveBuildings,
   step,
   tickDistance,
   warpTouching,
@@ -203,6 +204,21 @@ describe("animación", () => {
     expect(a.frame.frame).toBe(6);
     a.tick(Facing.Right, false, false, 0);
     expect(a.frame.frame).toBe(6);
+  });
+});
+
+describe("sombra", () => {
+  it("va debajo de Buildings salvo en tiles Passable de Buildings o agua", () => {
+    expect(shadowAboveBuildings(loc, at(1, 1))).toBe(false);
+    expect(shadowAboveBuildings(loc, { x: 3 * TILE, y: 16, facing: Facing.Down })).toBe(true);
+  });
+
+  it("revisa la caja extendida 8 px hacia abajo", () => {
+    const b = at(7, 4);
+    b.y = 5 * TILE - 32 - 9;
+    expect(shadowAboveBuildings(loc, b)).toBe(false);
+    b.y = 5 * TILE - 32 - 8;
+    expect(shadowAboveBuildings(loc, b)).toBe(true);
   });
 });
 

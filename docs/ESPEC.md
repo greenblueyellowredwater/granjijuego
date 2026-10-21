@@ -194,6 +194,28 @@ Fuente: lectura del IL (`tools/clr/disasm.ts`) de los métodos citados en cada p
 
 **Sombra** (`Farmer.DrawShadow`). Textura `LooseSprites/shadow`, centrada en `(X+32, Y+24)`, a escala `4 − (corriendo y con índice de animación > 1 ? |featureYOffsetPerFrame[frame]|·0,5 : 0)`. Se dibuja justo debajo del granjero. `featureYOffsetPerFrame` es una tabla estática de 126 enteros que se obtiene de la DLL.
 
+**Orden de dibujo del mundo** (`Game1.DrawWorld`):
+1. Fondo.
+2. Capa `Back` y sus subcapas.
+3. Agua (`drawWater`).
+4. Decoraciones del piso.
+5. **Sombras normales.**
+6. Capa `Buildings` y sus subcapas.
+7. **Sombras "sobre edificios".**
+8. Personajes y objetos (`GameLocation.draw`, ordenados por profundidad).
+9. Capa `Front`, `drawAboveFrontLayer` y `AlwaysFront`.
+10. Clima.
+11. Iluminación.
+
+**Sombra sobre `Buildings`** (`Game1.checkCharacterTilesForShadowDrawFlag`, `GameLocation.shouldShadowBeDrawnAboveBuildingsLayer`, `Farm.shouldShadowBeDrawnAboveBuildingsLayer`). Se dibuja después de `Buildings` si el granjero está en un puente, o si alguno de los tiles que cubre la caja, con el alto extendido 8 px (de `⌊izq/64⌋` a `⌊der/64⌋` y de `⌊arriba/64⌋` a `⌊abajo/64⌋`, con bordes exclusivos), cumple alguna de estas condiciones:
+- el tile de `Buildings` tiene `Passable`;
+- hay tierra arada;
+- es agua y el tile de `Buildings` no es de la hoja `Town` con índice entre 1004 y 1013 (sin tile cuenta como "no es");
+- hay un edificio construido atravesable;
+- en la granja, el tile de `Back` tiene `NoSpawn=All` y `Type=Wood`.
+
+Si ninguno cumple, la sombra va antes de `Buildings` y queda tapada por paredes y cercas.
+
 **Cámara** (`Game1.UpdateViewPort`, `clampViewportToGameMap`). Se centra en el centro de la caja del granjero y se limita a los bordes del mapa. En el eje donde el mapa es más chico que la pantalla, se centra el mapa.
 
 ## Hito 2: resultados (2026-10-21)

@@ -53,6 +53,7 @@ export class RenderedMap {
   readonly layers: Phaser.Tilemaps.TilemapLayer[] = [];
   readonly data: TiledMap;
   readonly characterDepth: number;
+  readonly belowBuildingsDepth: number;
   private readonly animated: AnimatedCell[] = [];
 
   constructor(
@@ -71,8 +72,10 @@ export class RenderedMap {
     });
     const order = drawOrder(this.map.layers.map((l) => l.name));
     let characterDepth = order.length;
+    let belowBuildingsDepth = -1;
     order.forEach((name, depth) => {
       if (name === "Front" && characterDepth === order.length) characterDepth = depth - 0.5;
+      if (name === "Buildings") belowBuildingsDepth = depth - 0.5;
       if (HIDDEN_LAYERS.has(name)) return;
       const layer = this.map.createLayer(name, tilesets, 0, 0);
       if (!layer) return;
@@ -85,6 +88,7 @@ export class RenderedMap {
       }
     });
     this.characterDepth = characterDepth;
+    this.belowBuildingsDepth = belowBuildingsDepth >= 0 ? belowBuildingsDepth : characterDepth - 0.5;
   }
 
   get widthInPixels() {

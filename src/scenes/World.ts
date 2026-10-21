@@ -11,6 +11,7 @@ import {
   farmerBox,
   findOpenTile,
   positionForTile,
+  shadowAboveBuildings,
   step,
   TICK_MS,
   TICKS_PER_SECOND,
@@ -201,6 +202,7 @@ export class World extends Phaser.Scene {
     this.armsSprite.setFrame(frame + ARM_OFFSET_COLUMNS).setPosition(x, y).setFlipX(f.flip);
     const shrink = this.running && this.animator.animationIndexInLoop > 1 ? Math.abs(this.featureYOffset[f.frame] ?? 0) * 0.5 : 0;
     this.shadow.setPosition(this.body.x + 32, this.body.y + 24).setScale(PIXEL_SCALE - shrink);
+    this.shadow.setDepth(shadowAboveBuildings(this.location, this.body) ? this.rendered.characterDepth - 0.02 : this.rendered.belowBuildingsDepth);
   }
 
   private updateCamera() {
