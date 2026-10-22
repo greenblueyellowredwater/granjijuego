@@ -7,6 +7,8 @@ import type { Item, ItemData } from "../world/items.ts";
 import { drawTooltip, type TooltipContent } from "./tooltip.ts";
 import { SocialPage, socialLayout, type SocialEntry } from "./social-page.ts";
 import { drawSkillsPage } from "./skills-page.ts";
+import { craftingLayout, drawRecipes, recipeBounds } from "./crafting-page.ts";
+import type { RecipeSlot } from "../world/crafting.ts";
 
 const CURSORS = "LooseSprites/Cursors";
 const CURSORS_16 = "LooseSprites/Cursors_1_6";
@@ -101,10 +103,25 @@ export class GameMenu {
 
   hoveredSlot(uiWidth: number, uiHeight: number, px: number, py: number) {
     const l = gameMenuLayout(uiWidth, uiHeight);
+    if (this.tab === "crafting") {
+      const c = craftingLayout(l.x, l.y, l.width, l.height);
+      return inventorySlotAt(px, py, c.inventory.x, c.inventory.y, false);
+    }
     return inventorySlotAt(px, py, l.inventory.x, l.inventory.y, true);
   }
 
-  tab: "inventory" | "skills" | "social" = "inventory";
+  recipeAt(uiWidth: number, uiHeight: number, px: number, py: number, slots: RecipeSlot[]) {
+    const l = gameMenuLayout(uiWidth, uiHeight);
+    const c = craftingLayout(l.x, l.y, l.width, l.height);
+    return slots.find((s) => {
+      if (s.page !== this.craftingPage) return false;
+      const r = recipeBounds(c.recipeOrigin, s);
+      return px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h;
+    }) ?? null;
+  }
+
+  tab: "inventory" | "skills" | "social" | "crafting" = "inventory";
+  craftingPage = 0;
   readonly social = new SocialPage();
   farmerAt: { x: number; y: number } | null = null;
 
@@ -114,6 +131,15 @@ export class GameMenu {
     if (inside(l.close.x, l.close.y, 48, 48)) return { kind: "close" as const };
     const tab = l.tabs.find((t) => inside(t.x, t.y, 64, 64));
     if (tab) return { kind: "tab" as const, name: tab.name };
+    if (this.tab === "crafting") {
+      const c = craftingLayout(l.x, l.y, l.width, l.height);
+      if (inside(c.trash.x, c.trash.y, 64, 104)) return { kind: "trash" as const };
+      if (inside(c.up.x, c.up.y, 64, 64)) return { kind: "craftUp" as const };
+      if (inside(c.down.x, c.down.y, 64, 64)) return { kind: "craftDown" as const };
+      const slot = inventorySlotAt(px, py, c.inventory.x, c.inventory.y, false);
+      if (slot >= 0) return { kind: "slot" as const, slot };
+      return { kind: "recipePoint" as const, x: px, y: py };
+    }
     if (this.tab === "social") {
       const s = socialLayout(l.x, l.y, l.width + 36, l.height);
       if (inside(s.up.x, s.up.y, 44, 48)) return { kind: "up" as const };
@@ -127,7 +153,7 @@ export class GameMenu {
     return null;
   }
 
-  draw(uiWidth: number, uiHeight: number, items: (Item | null)[], data: ItemData, current: number, maxItems: number, info: InventoryPageInfo, mouse: { x: number; y: number }, tooltip: TooltipContent | null = null, energyStrings = { energy: "{0} Energy", health: "{0} Health" }, social: { entries: SocialEntry[]; strings: Record<string, string> } = { entries: [], strings: {} }, skills: { levels: number[]; title: string } = { levels: [], title: "" }) {
+  draw(uiWidth: number, uiHeight: number, items: (Item | null)[], data: ItemData, current: number, maxItems: number, info: InventoryPageInfo, mouse: { x: number; y: number }, tooltip: TooltipContent | null = null, energyStrings = { energy: "{0} Energy", health: "{0} Health" }, social: { entries: SocialEntry[]; strings: Record<string, string> } = { entries: [], strings: {} }, skills: { levels: number[]; title: string } = { levels: [], title: "" }, crafting: { slots: RecipeSlot[]; craftable: (s: RecipeSlot) => boolean } = { slots: [], craftable: () => false }) {
     const b = this.back, f = this.front;
     b.begin();
     f.begin();
@@ -138,6 +164,22 @@ export class GameMenu {
       for (const t of l.tabs) {
         const icon = TAB_ICON[t.name];
         b.draw({ texture: icon.texture, sx: icon.sx, sy: icon.sy, sw: 16, sh: 16, x: t.x, y: t.y + (t.name === this.tab ? 8 : 0), scaleX: 4 });
+      }
+      if (this.tab === "crafting") {
+        const c = craftingLayout(l.x, l.y, l.width, l.height);
+        drawHorizontalPartition(b, l.x, l.width, c.partitionY);
+        drawInventoryGrid(b, c.inventory.x, c.inventory.y, items, data, { playerInventory: false, showGrayedOutSlots: true, maxItems, currentToolIndex: current, tinyFont: null });
+        const pages = Math.max(1, ...crafting.slots.map((s) => s.page + 1));
+        drawRecipes(b, crafting.slots, this.craftingPage, c.recipeOrigin, data, crafting.craftable, pages);
+        f.draw({ texture: CURSORS, sx: 564, sy: 102, sw: 18, sh: 26, x: c.trash.x, y: c.trash.y, scaleX: 4 });
+        f.draw({ texture: CURSORS, sx: 564, sy: 129, sw: 18, sh: 10, x: c.trash.x + 60, y: c.trash.y + 40, originX: 16 / 18, originY: 1, scaleX: 4 });
+        f.draw({ texture: CURSORS, sx: 337, sy: 494, sw: 12, sh: 12, x: l.close.x, y: l.close.y, scaleX: 4 });
+        if (this.held) drawItemInMenu(f, this.held, mouse.x + 16, mouse.y + 16, 1, 1, data);
+        if (tooltip && this.small && this.font) drawTooltip(f, { small: this.small, smallTexture: SMALL_FONT, dialogue: this.font, dialogueTexture: DIALOGUE_FONT }, tooltip, mouse, this.held ? 40 : 0, { w: uiWidth, h: uiHeight }, energyStrings);
+        this.farmerAt = null;
+        b.end();
+        f.end();
+        return;
       }
       if (this.tab === "skills") {
         if (this.small) {

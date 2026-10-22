@@ -15,6 +15,7 @@ import { ShippingMenu } from "../render/shipping-menu.ts";
 import { summarizeShipping } from "../world/shipping.ts";
 import { extraInfoKeys, learnDefaultRecipes, professionChoices, recipesUnlockedAt } from "../world/levelup.ts";
 import { sortSocialEntries, type SocialEntry } from "../render/social-page.ts";
+import { canCraft, consumeIngredients, countIngredient, layoutRecipes, parseRecipe, type Recipe, type RecipeSlot } from "../world/crafting.ts";
 import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, parseText, TOOL_CATEGORY_COLOR, type TooltipContent } from "../render/tooltip.ts";
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
 import { dayTileGlows, locationLights, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
@@ -1100,9 +1101,15 @@ export class World extends Phaser.Scene {
     if (!hit) return;
     if (hit.kind === "close") this.closeGameMenu();
     else if (hit.kind === "tab") {
-      if (hit.name === "inventory" || hit.name === "social" || hit.name === "skills") menu.tab = hit.name;
+      if (hit.name === "inventory" || hit.name === "social" || hit.name === "skills" || hit.name === "crafting") menu.tab = hit.name;
       if (hit.name === "exit") this.closeGameMenu();
     } else if (hit.kind === "up" || hit.kind === "down") menu.social.scrollBy(hit.kind === "up" ? -1 : 1, this.socialEntries().length);
+    else if (hit.kind === "craftUp") menu.craftingPage = Math.max(0, menu.craftingPage - 1);
+    else if (hit.kind === "craftDown") menu.craftingPage = Math.min(Math.max(0, ...this.recipeSlots().map((s) => s.page)), menu.craftingPage + 1);
+    else if (hit.kind === "recipePoint") {
+      const slot = menu.recipeAt(this.cameras.main.width, this.cameras.main.height, hit.x, hit.y, this.recipeSlots());
+      if (slot) this.craft(slot.recipe);
+    }
     else if (hit.kind === "trash") menu.held = null;
     else if (hit.kind === "slot") {
       if (hit.slot >= MAX_ITEMS) return;
@@ -1130,6 +1137,8 @@ export class World extends Phaser.Scene {
     const cs = strings["Strings\\StringsFromCSFiles"] ?? {};
     const season = cs[`Utility.cs.${5680 + Math.max(0, SEASON_ORDER.indexOf(state.season as (typeof SEASON_ORDER)[number]))}`] ?? state.season;
     const shirt = shirtInfo(this.appearance, clothing), pants = pantsInfo(this.appearance, clothing);
+    const craftSlots = menu.open && menu.tab === "crafting" ? this.recipeSlots() : [];
+    const hoveredRecipe = menu.open && menu.tab === "crafting" ? menu.recipeAt(w, h, pointer.x, pointer.y, craftSlots) : null;
     const rgb = (c: number[]) => (c[0] << 16) | (c[1] << 8) | c[2];
     menu.draw(w, h, state.inventory, this.params.items, state.currentToolIndex, MAX_ITEMS, {
       farmerName: state.farmerName,
@@ -1141,10 +1150,54 @@ export class World extends Phaser.Scene {
       shirt: { index: shirt.spriteIndex, color: rgb(shirt.color) },
       pants: { index: pants.spriteIndex, color: rgb(pants.color) },
       strings: { farmName: ui.Inventory_FarmName ?? "{0} Farm", funds: ui.Inventory_CurrentFunds ?? "Current Funds: {0}g", earnings: ui.Inventory_TotalEarnings ?? "Total Earnings: {0}g" },
-    }, pointer, this.tooltipFor(menu.open ? state.inventory[menu.hoveredSlot(w, h, pointer.x, pointer.y)] ?? null : null), { energy: ui.ItemHover_Energy ?? "{0} Energy", health: ui.ItemHover_Health ?? "{0} Health" }, { entries: menu.open && menu.tab === "social" ? this.socialEntries() : [], strings: cs }, { levels: state.experience.map((x) => levelForExperience(x)), title: cs[farmerTitleKey(state.experience.map((x) => levelForExperience(x)), this.appearance.isMale)] ?? "" });
+    }, pointer, hoveredRecipe ? this.recipeTooltip(hoveredRecipe.recipe) : this.tooltipFor(menu.open ? state.inventory[menu.hoveredSlot(w, h, pointer.x, pointer.y)] ?? null : null), { energy: ui.ItemHover_Energy ?? "{0} Energy", health: ui.ItemHover_Health ?? "{0} Health" }, { entries: menu.open && menu.tab === "social" ? this.socialEntries() : [], strings: cs }, { levels: state.experience.map((x) => levelForExperience(x)), title: cs[farmerTitleKey(state.experience.map((x) => levelForExperience(x)), this.appearance.isMale)] ?? "" }, menu.open && menu.tab === "crafting" ? { slots: craftSlots, craftable: (sl) => canCraft(sl.recipe, state.inventory, this.params.items.objects) } : undefined);
     if (menu.open && menu.tab !== "social" && menu.farmerAt) {
       this.menuFarmer?.update({ frame: 0, ms: 0, flip: false, offsetY: 0 } as unknown as Parameters<FarmerSprite["update"]>[0], Facing.Down, menu.farmerAt.x, menu.farmerAt.y, 0, () => HUD_DEPTH + 41);
     } else this.menuFarmer?.hide();
+  }
+
+  private recipeSlots(): RecipeSlot[] {
+    const { recipes, state } = this.params;
+    return layoutRecipes(Object.entries(recipes.crafting).filter(([name]) => state.craftingRecipes.includes(name)).map(([name, raw]) => parseRecipe(name, raw, false)));
+  }
+
+  private craft(recipe: Recipe) {
+    const menu = this.gameMenu!;
+    const { state, items } = this.params;
+    if (!canCraft(recipe, state.inventory, items.objects)) return;
+    const output: Item = { id: recipe.output, stack: recipe.produced, quality: 0 };
+    if (menu.held) {
+      if (menu.held.id !== output.id || menu.held.stack + output.stack > maximumStack(menu.held)) return;
+      consumeIngredients(recipe, state.inventory, items.objects);
+      menu.held.stack += output.stack;
+    } else {
+      consumeIngredients(recipe, state.inventory, items.objects);
+      menu.held = output;
+      menu.heldFrom = -1;
+    }
+  }
+
+  private recipeTooltip(recipe: Recipe): TooltipContent | null {
+    const base = this.tooltipFor({ id: recipe.output, stack: 1 });
+    if (!base) return null;
+    const { state, items } = this.params;
+    const cs = this.params.strings["Strings\\StringsFromCSFiles"] ?? {};
+    const name = recipe.displayName ?? this.itemDisplayName(recipe.output);
+    const ingredientName = (key: string) => {
+      if (key.startsWith("-")) return cs[{ "-1": "CraftingRecipe.cs.568", "-2": "CraftingRecipe.cs.569", "-3": "CraftingRecipe.cs.570", "-4": "CraftingRecipe.cs.571", "-5": "CraftingRecipe.cs.572", "-6": "CraftingRecipe.cs.573", "-777": "CraftingRecipe.cs.574" }[key] ?? ""] ?? "???";
+      return this.itemDisplayName(key.startsWith("(") ? key : `(O)${key}`);
+    };
+    const spriteFor = (key: string) => (key.startsWith("-") ? null : itemSprite({ id: key.startsWith("(") ? key : `(O)${key}`, stack: 1 }, items));
+    return {
+      ...base,
+      title: recipe.produced > 1 ? `${name} x${recipe.produced}` : name,
+      text: " ",
+      recipe: {
+        ingredientsLabel: cs["CraftingRecipe.cs.567"] ?? "Ingredients:",
+        description: base.text.replace(/\n/g, " ").replace(/\s+/g, " ").trim(),
+        ingredients: recipe.ingredients.map((ing) => ({ name: ingredientName(ing.key), count: ing.count, missing: countIngredient(state.inventory, ing.key, items.objects) < ing.count, sprite: spriteFor(ing.key) })),
+      },
+    };
   }
 
   private socialEntries(): SocialEntry[] {
@@ -1192,6 +1245,10 @@ export class World extends Phaser.Scene {
       color = data?.Type === "Arch" ? ARCH_CATEGORY_COLOR : categoryColor(data?.Category ?? 0);
       const e = data?.Edibility ?? -300;
       edibility = e !== -300 ? e : null;
+    } else if (type === "BC") {
+      const data = this.params.items.bigCraftables?.[id];
+      title = this.localized(data?.DisplayName) || id;
+      description = this.localized(data?.Description);
     } else {
       const data = (type === "W" ? this.params.items.weapons[id] : this.params.items.tools[id]) as { DisplayName?: string; Description?: string } | undefined;
       title = this.localized(data?.DisplayName) || id;

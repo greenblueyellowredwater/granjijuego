@@ -2,6 +2,7 @@ import type { UiBatch } from "./ui-batch.ts";
 import type { SpriteFont } from "./spritefont.ts";
 import { MENU_TEXTURE } from "./toolbar.ts";
 import { TEXT_COLOR, TEXT_SHADOW_COLOR } from "./menu-parts.ts";
+import { tinyDigits } from "../world/items.ts";
 
 const CURSORS = "LooseSprites/Cursors";
 const BOX: [number, number, number, number] = [0, 256, 60, 60];
@@ -47,6 +48,12 @@ export function parseText(text: string, font: Measurer, width: number) {
 
 export const descriptionWidth = (displayName: string, dialogue: Measurer) => Math.max(272, Math.trunc(dialogue.measure(displayName).width));
 
+export interface TooltipRecipe {
+  ingredients: { name: string; count: number; missing: boolean; sprite: { texture: string; sx: number; sy: number; sw: number; sh: number } | null }[];
+  description: string;
+  ingredientsLabel: string;
+}
+
 export interface TooltipContent {
   title: string;
   text: string;
@@ -54,6 +61,11 @@ export interface TooltipContent {
   categoryColor: number;
   edibility: number | null;
   quality: number;
+  recipe?: TooltipRecipe;
+}
+
+export function recipeDescriptionHeight(r: TooltipRecipe, small: Measurer, width: number) {
+  return Math.trunc(small.measure(parseText(r.description, small, width)).height + r.ingredients.length * 36 + Math.trunc(small.measure(r.ingredientsLabel).height) + 21);
 }
 
 export function staminaRecovered(edibility: number, quality: number) {
@@ -77,6 +89,10 @@ export function tooltipLayout(c: TooltipContent, small: Measurer, dialogue: Meas
     const stamina = staminaRecovered(heal, c.quality);
     h += 40 * (stamina > 0 && healthRecovered(heal, c.quality) > 0 ? 2 : 1);
     w = Math.trunc(Math.max(w, small.measure(energyStrings.energy.replace("{0}", "9999")).width + 92, small.measure(energyStrings.health.replace("{0}", "9999")).width + 92));
+  }
+  if (c.recipe) {
+    w = Math.trunc(Math.max(dialogue.measure(c.title).width + 12, 384));
+    h += recipeDescriptionHeight(c.recipe, small, w + 4 - 8) - 32;
   }
   let x = mouse.x + 32 + offset, y = mouse.y + 32 + offset;
   if (x + w > screen.w) {
@@ -138,10 +154,34 @@ export function drawTooltip(b: UiBatch, f: TooltipFonts, c: TooltipContent, mous
     glyphs(b, f.small, f.smallTexture, c.category, x + 16, y + 20, c.categoryColor);
     y += Math.trunc(f.small.measure("T").height) + 4 + 16;
   } else y += 16;
-  if (c.text.trim().length > 0) {
+  if (c.text.trim().length > 0 && !c.recipe) {
     for (const [dx, dy] of [[2, 2], [0, 2], [2, 0]]) glyphs(b, f.small, f.smallTexture, c.text, x + 16 + dx, y + 20 + dy, TEXT_SHADOW_COLOR);
     glyphs(b, f.small, f.smallTexture, c.text, x + 16, y + 20, TEXT_COLOR, 0.9);
     y += Math.trunc(f.small.measure(c.text).height) + 4;
+  }
+  if (c.recipe) {
+    const r = c.recipe, px = x + 16, py = y - 8, width = w;
+    const ingH = Math.trunc(f.small.measure("Ing!").height);
+    b.stretch("__WHITE", [0, 0, 1, 1], px + 8, py + 32 + ingH - 4 - 2, width - 32, 2, TEXT_COLOR, 0.35);
+    for (const [dx, dy] of [[-2, 2], [0, 2]]) glyphs(b, f.small, f.smallTexture, r.ingredientsLabel, px + 8 + dx, py + 28 + dy, TEXT_SHADOW_COLOR);
+    glyphs(b, f.small, f.smallTexture, r.ingredientsLabel, px + 8, py + 28, TEXT_COLOR, 0.75);
+    r.ingredients.forEach((ing, i) => {
+      const iy = py + 64 + Math.trunc((i * 64) / 2) + i * 4;
+      if (ing.sprite) {
+        const scale = 2 * (16 / Math.max(ing.sprite.sw, ing.sprite.sh));
+        b.draw({ ...ing.sprite, x: px + 16, y: iy + 16, originX: 0.5, originY: 0.5, scaleX: scale });
+      }
+      const digits = tinyDigits(ing.count, 2);
+      for (const g of digits.glyphs) b.draw({ texture: CURSORS, sx: g.sx, sy: 56, sw: 5, sh: 7, x: px + 32 - digits.width + g.x, y: iy + 21, scaleX: 2, tint: 0xfaebd7 });
+      const color = ing.missing ? 0xff0000 : TEXT_COLOR;
+      for (const [dx, dy] of [[-2, 2], [0, 2]]) glyphs(b, f.small, f.smallTexture, ing.name, px + 40 + dx, iy + 4 + dy, TEXT_SHADOW_COLOR);
+      glyphs(b, f.small, f.smallTexture, ing.name, px + 40, iy + 4, color);
+    });
+    b.stretch("__WHITE", [0, 0, 1, 1], px + 8, py + 64 + 4 + r.ingredients.length * 36, width - 32, 2, TEXT_COLOR, 0.35);
+    const desc = parseText(r.description, f.small, width - 8);
+    for (const [dx, dy] of [[-2, 2], [0, 2]]) glyphs(b, f.small, f.smallTexture, desc, px + dx, py + 76 + r.ingredients.length * 36 + dy, TEXT_SHADOW_COLOR);
+    glyphs(b, f.small, f.smallTexture, desc, px, py + 76 + r.ingredients.length * 36, TEXT_COLOR, 0.75);
+    y += recipeDescriptionHeight(r, f.small, w - 8);
   }
   if (c.edibility !== null) {
     const stamina = staminaRecovered(c.edibility, c.quality), health = healthRecovered(c.edibility, c.quality);

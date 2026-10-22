@@ -774,7 +774,7 @@ Aproximaciones:
 **Tienda**: su inventario usa el mismo `InventoryMenu`, sin `playerInventory` y con `showGrayedOutSlots`.
 
 Aproximaciones:
-- Funcionan las pestañas de inventario, habilidades (spec S15), social (spec S14) y salir.
+- Funcionan las pestañas de inventario, habilidades (spec S15), social (spec S14), artesanía (spec S18) y salir.
 - Sin mini-retrato en la pestaña de habilidades y sin botón de ordenar funcional.
 - Sin la capa azul nocturna sobre el granjero, sin animación de la tapa del tacho y sin tirar ítems fuera del menú.
 
@@ -981,6 +981,38 @@ Aproximaciones:
 - Sin variante de lluvia (nubes) ni luna del día 28.
 - Sin la estrella fugaz ni el detalle por categoría (botón +).
 - Sin animación de salida.
+
+## Spec S18: artesanía (`CraftingPage`, `CraftingRecipe`)
+
+**Recetas** (`Data/CraftingRecipes`):
+- Formato: `ingredientes/área/salida [cantidad]/esGrande/condición/nombre`. En `CookingRecipes` la condición va en el campo 3 y el nombre en el 4.
+- Los ingredientes van en pares `id cantidad`. Un id negativo es una categoría:
+  - −1..−6: CraftingRecipe.cs.568–573 ("Greens (Any)", etc.).
+  - −777: semillas silvestres.
+- Una categoría coincide con cualquier `(O)` de esa categoría. Los conteos suman todas las pilas del inventario. Al consumir, se toma en orden de casilla.
+- Se muestran las recetas conocidas en el orden del archivo.
+
+**Grilla** (`layoutRecipes`):
+- Columnas cada 72 desde `x+40`, filas cada 72 desde `y+120`. Diez columnas y cuatro filas por página.
+- Una receta grande ocupa dos filas (64×128). Si no entra en la fila 3, sigue buscando lugar (`spaceOccupied`).
+- Ícono de salida a ×4. Sin ingredientes suficientes: DimGray a 0,4.
+- Cantidad producida > 1: `NumberSprite` a escala 0,5 en `(x+62, y+62)`.
+- Flechas de página: `Cursors` tile 12 (arriba) y 11 (abajo), de 64×64 a ×0,8, en `(x+800, y+120)` y `(x+800, y+344)`.
+- Partición en `y+392`. Inventario (no de jugador, con grises) en `(x+56, y+440)`. Tacho en `(x+w+4, y+h−368)`.
+
+**Clic en receta**: si alcanza, crea la salida en la mano (o la suma a la pila de la mano si es igual y entra) y consume los ingredientes. El ítem en la mano se deja en el inventario como en la página de inventario.
+
+**Tooltip de receta** (`drawToolTip` con `craftingIngredients`):
+- Título: nombre + ` xN` si produce más de uno. El texto es " " (sin descripción arriba).
+- Ancho `max(ancho_título + 12, 384)`. Alto `+= alturaDescripción(ancho−4) − 32`.
+- `drawRecipeDescription` en `(x+16, y−8)`:
+  - Línea a 0,35 bajo "Ingredients:" (`CraftingRecipe.cs.567`, a 0,75).
+  - Por ingrediente i, en `y + 64 + 36i`: ícono a escala `2·16/máx(lado)` centrado en `(+16, +16)`, cantidad con dígitos chicos ×2 AntiqueWhite alineada a `x+32`, y nombre en `x+40` (rojo si falta).
+  - Otra línea en `+68 + 36n`.
+  - Descripción del ítem partida a `ancho−8` en `+76 + 36n`, a 0,75.
+- `alturaDescripción(w) = alto(desc partida) + 36n + alto("Ingredients:") + 21`.
+
+Aproximaciones: sin cocina, sin cofres como fuente de materiales y sin colocar en el mundo los objetos fabricados.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
