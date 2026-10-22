@@ -1155,6 +1155,72 @@ Aproximaciones:
 
 Aproximaciones: sin efecto del nivel de la herramienta (carga y área), compra de animales, construcción, mejora de casa, geodas ni diálogo del dueño en la tienda.
 
+## Spec S23: pesca (`FishingRod`, `BobberBar`, `GameLocation.GetFishFromLocationData`)
+
+**Lance**:
+- Con una caña (`ClassName` FishingRod) en la mano, mantener C o clic carga el poder.
+  - El poder va de 0 a 1 a `0,001·ms` y rebota en los extremos.
+  - Medidor: `Cursors (193,1868,47,12)` ×4 en `(pos.x−48, pos.y−160)`. El relleno mide `164·poder × 25` en `(pos.x−36, pos.y−148)`, con color rojo→verde.
+- Al soltar se gasta energía `8 − nivel·0,1` y la boya cae desde el centro del granjero:
+  - Horizontal: a `máx(128, poder·(extra+4)·64) − 8`.
+  - Vertical: a `máx(128, poder·(extra+3)·64)`.
+  - `extra` según nivel de pesca: ≥15 → 4, ≥8 → 3, ≥4 → 2, ≥1 → 1.
+  - Si la casilla no es agua, se cancela.
+- La boya es `TileSheets/bobbers (0,16,16,16)` ×4.
+- `clearWaterDistance` = radio del primer anillo de casillas que contiene tierra (`distanceToLand`).
+
+**Picada**:
+- Tiempo `Random(600, máx(600, 30000 − 250·nivel))`, ×0,75 en el primer lance, mínimo 500.
+- Al picar hay 800 ms para tocar: se muestra "!" (`Cursors (395,497,3,8)`, escala 5 que decrece) sobre la cabeza.
+- Si no se toca a tiempo, se recalcula la espera. Tocar sin picada recoge la línea.
+
+**Pez** (`GetFishFromLocationData`, dos pasadas):
+- Entradas `Default.Fish` + `Fish` de la ubicación, ordenadas por `Precedence` y al azar.
+- Se filtra por:
+  - Estación, `PlayerPosition` y `BobberPosition`.
+  - `MinFishingLevel` y distancia a la orilla mínima y máxima.
+  - Cebo mágico.
+- Probabilidad `GetChance`: `Chance + suerte diaria (si aplica) + ChanceBoostPerLuckLevel·nivelSuerte`. Después, `Condition` GSQ y `CatchLimit`.
+- `CheckGenericFishRequirements` con `Data/Fish`:
+  - Hora dentro de algún rango del campo 5 y clima del campo 7 (sunny/rainy).
+  - Nivel ≥ campo 12.
+  - `prob = campo10 − máx(0, campo9 − profundidad)·campo11·campo10 + nivel/50` (×1,1 con caña de entrenamiento), tope 0,9.
+  - La caña de entrenamiento no pesca dificultad ≥ 50 salvo `CanUseTrainingRod`.
+- Con 0 peces atrapados (tutorial) solo vale un pez con el campo 13 en true. Si no sale nada: Sunfish `(O)145` en el tutorial, o basura `(O)168`.
+- Si el resultado no es un pez (categoría −4), se entrega directo.
+
+**Minijuego** (`BobberBar`, 60 Hz; ver código para cada constante):
+- Campos de `Data/Fish`: dificultad (1), movimiento (2: mixed/dart/smooth/sinker/floater) y tamaño mínimo/máximo (3, 4).
+- Tamaño = `min + (max−min)·f` + 1, con `f = clearWater/5 · Random(1+nivel/2, máx(6, ·))/5 · (1 ± 10%)`. Calidad 0, 1 o 2 según f < 0,33 / < 0,66.
+- Barra: alto `96 + 8·nivel`, más `40 − 8·nivel` con caña de principiante y nivel < 5 (que además fuerza calidad 0). Posición inicial `568 − alto`.
+- Primer pez: progreso inicial 0,1, dificultad mínima 50 y sin penalización al salir de la barra.
+- Pez:
+  - Objetivo aleatorio con probabilidad `dif·(smooth ? 20 : 1)/4000`.
+  - Aceleración `(objetivo − pos)/(Random(10,30) + 100 − dif)` con suavizado /5.
+  - Saltos de ±(50..100) con probabilidad `dif/2000`; los dart, de ±(50..100+2·dif) con probabilidad `dif/1000`.
+  - sinker/floater suman ±0,01 por tick (tope 1,5).
+- Barra: gravedad +0,25, o −0,25 con el botón apretado; ×0,6 si el pez está dentro. Rebota en los bordes con `−v·2/3`.
+- Dentro: `pos+12 ≤ barra−32+alto` y `pos−16 ≥ barra−32`.
+- Progreso: +0,002 dentro y −0,003 fuera (−0,002 con caña de principiante). Salir de la barra después de haber entrado quita el "perfecto".
+- Fuera de la barra, el tamaño baja 1 cada 800 ms.
+- Con perfecto, la calidad sube (≥2 → iridio, ≥1 → oro).
+- Experiencia: `máx(1, (q+1)·3 + dif/3)`, más 140% si es perfecto y ×5 si es jefe.
+- Dibujo:
+  - Burbuja `(652,1685,52,157)` a 0,6.
+  - Marco `(644,1999,38,150)`.
+  - Barra verde `(682,2078|2081|2085,9,…)`, a `0,25·(sin(ms/100)+2)` fuera.
+  - Progreso de 16 px de ancho, rojo→verde, en `x+124`.
+  - Carrete `(257,1990,5,10)` rotando.
+  - Pez `(614|634 jefe,1840,20,20)` ×2 en `(x+82, y+36+pos)`.
+  - Posición de la barra: `(pos.x−196 | pos.x+128 mirando a la derecha, pos.y−338)`, acotada a la pantalla.
+- Durante el minijuego el tiempo no avanza y la barra de herramientas se oculta.
+
+Aproximaciones:
+- Sin animación de caña ni línea, y sin el vuelo de la boya.
+- Sin tesoros, carnada ni aparejos.
+- Sin estaciones de `FishAreaId` ni suerte diaria.
+- Willy no regala la caña (la de entrenamiento se compra a 25g).
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:

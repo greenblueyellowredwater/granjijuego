@@ -84,7 +84,7 @@ export class SingleAnimation {
   }
 }
 
-export type ToolKind = "hoe" | "axe" | "pickaxe" | "wateringCan" | "scythe" | "other";
+export type ToolKind = "hoe" | "axe" | "pickaxe" | "wateringCan" | "scythe" | "fishingRod" | "other";
 
 export function toolKind(className: string | undefined): ToolKind {
   switch (className) {
@@ -96,6 +96,8 @@ export function toolKind(className: string | undefined): ToolKind {
       return "pickaxe";
     case "WateringCan":
       return "wateringCan";
+    case "FishingRod":
+      return "fishingRod";
     default:
       return "other";
   }

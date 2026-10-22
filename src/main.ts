@@ -164,6 +164,7 @@ async function boot() {
   const weaponStrings = (await load("Strings/Weapons").catch(() => ({}))) as Record<string, string>;
   const bigCraftables = (await load("Data/BigCraftables").catch(() => ({}))) as ItemData["bigCraftables"];
   terrain.bigCraftables = bigCraftables;
+  const fish = (await load("Data/Fish").catch(() => ({}))) as Record<string, string>;
   const machines = (await load("Data/Machines").catch(() => ({}))) as Record<string, MachineData>;
   const craftingRecipes = (await load("Data/CraftingRecipes").catch(() => ({}))) as Record<string, string>;
   const cookingRecipes = (await load("Data/CookingRecipes").catch(() => ({}))) as Record<string, string>;
@@ -218,6 +219,7 @@ async function boot() {
     strings: { "Strings\\Objects": objectStrings, "Strings\\StringsFromCSFiles": csStrings, "Strings\\Locations": locationStrings, "Strings\\UI": uiStrings, "Strings\\Tools": toolStrings, "Strings\\Weapons": weaponStrings, "Strings\\NPCNames": npcNameStrings, "Strings\\BigCraftables": bigCraftableStrings },
     recipes: { crafting: craftingRecipes, cooking: cookingRecipes },
     machines,
+    fish,
     items: {
       tools,
       weapons,

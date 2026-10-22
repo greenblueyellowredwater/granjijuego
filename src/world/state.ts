@@ -30,6 +30,7 @@ export interface GameState {
   newLevels: [number, number][];
   professions: number[];
   toolUpgrade?: { id: string; daysLeft: number } | null;
+  fishCaught?: Record<string, [number, number]>;
   craftingRecipes: string[];
   cookingRecipes: string[];
   appearance?: Appearance;

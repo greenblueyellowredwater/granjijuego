@@ -14,6 +14,8 @@ import { LevelUpMenu } from "../render/levelup-menu.ts";
 import { ShippingMenu } from "../render/shipping-menu.ts";
 import { ChestMenu } from "../render/chest-menu.ts";
 import { summarizeShipping } from "../world/shipping.ts";
+import { BobberBarState, biteTime, bobberLanding, CASTING_TIMER_SPEED, chooseFish, distanceToLand, fishingExperience, fishSizeFactor, MAX_TIME_TO_NIBBLE, type SpawnFishData } from "../world/fishing.ts";
+import { FishingRenderer } from "../render/fishing.ts";
 import { createOutput, findRule, minutesElapsed, minutesUntilMorning, preserveNameKey, readyMinutes, type MachineData, type MachineState } from "../world/machines.ts";
 import { extraInfoKeys, learnDefaultRecipes, professionChoices, recipesUnlockedAt } from "../world/levelup.ts";
 import { sortSocialEntries, type SocialEntry } from "../render/social-page.ts";
@@ -61,7 +63,7 @@ import { objectBasePrice, shopStock, toolUpgrades, type ShopData, type ToolUpgra
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canApplyFertilizer, canTill, fertilizerQualityLevel, fertilizerSpeedBoost, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
-import { FARMING, farmerTitleKey, FORAGING, gainExperience, harvestExperience, levelForExperience, MINING } from "../world/skills.ts";
+import { FARMING, farmerTitleKey, FISHING, FORAGING, gainExperience, harvestExperience, levelForExperience, MINING } from "../world/skills.ts";
 import { checkConditions, daySaveRandom, type GsqState } from "../world/gsq.ts";
 import {
   bedSleepTile,
@@ -166,6 +168,7 @@ export interface WorldData {
   characters: Record<string, CharacterData>;
   shops: Record<string, ShopData>;
   machines: Record<string, MachineData>;
+  fish: Record<string, string>;
   strings: Record<string, Record<string, string>>;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
@@ -260,6 +263,8 @@ export class World extends Phaser.Scene {
     this.fadingTrees = [];
     this.entityImages = new Map();
     this.bubbleImages = [];
+    this.fishing = null;
+    this.fishingUi = null;
     this.treeMotions = new Map();
     this.npcImages = new Map();
     this.staticSolids = [];
@@ -770,6 +775,10 @@ export class World extends Phaser.Scene {
     if (this.tryPlace(target)) return;
     const t = this.currentTool();
     if (!t) return;
+    if (t.kind === "fishingRod") {
+      this.fishingButton();
+      return;
+    }
     const state = this.params.state;
     let facing = this.body.facing;
     if (target) {
@@ -1013,7 +1022,15 @@ export class World extends Phaser.Scene {
 
     const kb = this.input.keyboard!;
     this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,X,E") as Record<string, Phaser.Input.Keyboard.Key>;
-    kb.on("keydown-C", () => this.useToolButton());
+    kb.on("keydown-C", () => {
+      this.useHeld = true;
+      this.useToolButton();
+    });
+    kb.on("keyup-C", () => {
+      this.useHeld = false;
+      this.fishingRelease();
+    });
+    this.input.on("pointerup", () => this.fishingRelease());
     kb.on("keydown-X", () => (this.shipping?.summary ? this.finishShipping() : this.levelUp?.current ? this.finishLevelUp() : this.interact()));
     kb.on("keydown-E", () => (this.chestMenu?.open ? this.closeChest() : this.toggleGameMenu()));
     kb.on("keydown-ENTER", () => (this.dialogueBox?.open ? this.dialogueBox.advance() : this.question?.confirm()));
@@ -1219,6 +1236,167 @@ export class World extends Phaser.Scene {
   }
 
   private bubbleImages: Phaser.GameObjects.Image[] = [];
+  private fishing: {
+    phase: "charging" | "waiting" | "holding";
+    power: number;
+    speed: number;
+    bobber: { x: number; y: number } | null;
+    clearWater: number;
+    biteIn: number;
+    elapsed: number;
+    nibbleLeft: number;
+    nibbleScale: number;
+    bar: BobberBarState | null;
+    fish: { id: string; boss: boolean } | null;
+    holdMs: number;
+  } | null = null;
+  private fishingUi: FishingRenderer | null = null;
+  private useHeld = false;
+
+  private fishingButton() {
+    const state = this.params.state;
+    const level = levelForExperience(state.experience[FISHING] ?? 0);
+    if (!this.fishing) {
+      this.fishing = { phase: "charging", power: 0, speed: CASTING_TIMER_SPEED, bobber: null, clearWater: 0, biteIn: -1, elapsed: 0, nibbleLeft: -1, nibbleScale: 5, bar: null, fish: null, holdMs: 0 };
+      return;
+    }
+    const f = this.fishing;
+    if (f.phase !== "waiting" || f.bar) return;
+    if (f.nibbleLeft > 0 && f.bobber) {
+      const objects = this.params.items.objects;
+      const location = this.params.locations as unknown as Record<string, { Fish?: SpawnFishData[] | null }>;
+      const gsq = this.gsqState();
+      const tutorial = Object.keys(state.fishCaught ?? {}).length === 0;
+      const rodId = state.inventory[state.currentToolIndex]?.id;
+      const choice = chooseFish(location.Default?.Fish ?? [], location[this.location.name]?.Fish ?? [], this.params.fish, {
+        season: Math.max(0, SEASON_ORDER.indexOf(state.season as (typeof SEASON_ORDER)[number])),
+        time: this.params.clock.time,
+        raining: weatherFlags(state.weather).raining && this.outdoors,
+        fishingLevel: level,
+        dailyLuck: 0,
+        luckLevel: 0,
+        waterDepth: f.clearWater,
+        playerTile: centerTile(this.body),
+        bobberTile: { x: Math.floor(f.bobber.x / TILE), y: Math.floor(f.bobber.y / TILE) },
+        tutorial,
+        trainingRod: rodId === "(T)TrainingRod",
+        caught: state.fishCaught ?? {},
+        condition: (q) => checkConditions(q, { state: gsq, random: new DotNetRandom(Math.floor(Math.random() * 2147483647)) }),
+        random: Math.random,
+      });
+      f.fish = choice;
+      const raw = this.params.fish[choice.id.slice(3)];
+      if (raw && raw.split("/")[1] !== "trap" && (objects[choice.id.slice(3)]?.Category ?? 0) === -4) {
+        f.bar = new BobberBarState(raw, fishSizeFactor(f.clearWater, level, Math.random), level, rodId === "(T)TrainingRod", tutorial, choice.boss);
+      } else {
+        this.catchItem({ id: choice.id, stack: 1, quality: 0 }, 0);
+      }
+      f.nibbleLeft = -1;
+      return;
+    }
+    this.fishing = null;
+  }
+
+  private fishingRelease() {
+    const f = this.fishing;
+    if (!f || f.phase !== "charging") return;
+    const state = this.params.state;
+    const level = levelForExperience(state.experience[FISHING] ?? 0);
+    const b = farmerBox(this.body.x, this.body.y);
+    const land = bobberLanding(f.power, level, this.body.facing, { x: b.x + b.w / 2, y: b.y + b.h / 2 });
+    const tx = Math.floor(land.x / TILE), ty = Math.floor(land.y / TILE);
+    state.stamina -= 8 - level * 0.1;
+    if (!this.location.isWater(tx, ty)) {
+      this.fishing = null;
+      return;
+    }
+    f.phase = "waiting";
+    f.bobber = land;
+    f.clearWater = distanceToLand(tx, ty, (x, y) => this.location.isWater(x, y), (x, y) => this.location.inBounds(x, y));
+    f.biteIn = biteTime(level, true, Math.random);
+  }
+
+  private catchItem(item: Item, xp: number) {
+    const state = this.params.state;
+    if (xp > 0) gainExperience(state, FISHING, xp);
+    if (addItem(state.inventory.slice(0, MAX_ITEMS).map((x) => (x ? { ...x } : null)), item)) this.message = this.params.text.inventoryFull;
+    else addItem(state.inventory, item);
+    const caught = (state.fishCaught ??= {});
+    const prev = caught[item.id] ?? [0, 0];
+    caught[item.id] = [prev[0] + 1, Math.max(prev[1], 0)];
+    this.message = this.itemDisplayName(item.id);
+    if (this.fishing) {
+      this.fishing.phase = "holding";
+      this.fishing.holdMs = 1500;
+      this.fishing.fish = { id: item.id, boss: false };
+      this.fishing.bar = null;
+      this.fishing.bobber = null;
+    }
+    this.params.store.save(state);
+  }
+
+  private tickFishing() {
+    const f = this.fishing;
+    if (!f) return;
+    if (f.phase === "charging") {
+      f.power = Math.max(0, Math.min(1, f.power + f.speed * TICK_MS));
+      if (f.power === 1 || f.power === 0) f.speed = -f.speed;
+      return;
+    }
+    if (f.phase === "holding") {
+      f.holdMs -= TICK_MS;
+      if (f.holdMs <= 0) this.fishing = null;
+      return;
+    }
+    if (f.bar) {
+      const pressed = this.useHeld || this.input.activePointer.leftButtonDown();
+      f.bar.update(pressed, Math.random);
+      if (f.bar.done === "lost") this.fishing = null;
+      else if (f.bar.done === "caught" && f.fish) {
+        const bar = f.bar;
+        this.catchItem({ id: f.fish.id, stack: 1, quality: bar.resultQuality }, fishingExperience(bar.fishQuality, bar.difficulty, false, bar.perfect, f.fish.boss));
+        const caught = this.params.state.fishCaught!;
+        caught[f.fish.id] = [caught[f.fish.id][0], Math.max(caught[f.fish.id][1], bar.fishSize)];
+      }
+      return;
+    }
+    if (f.biteIn >= 0) {
+      f.elapsed += TICK_MS;
+      if (f.elapsed > f.biteIn) {
+        f.elapsed = 0;
+        f.biteIn = -1;
+        f.nibbleLeft = MAX_TIME_TO_NIBBLE;
+        f.nibbleScale = 5;
+      }
+    } else if (f.nibbleLeft > 0) {
+      f.nibbleLeft -= TICK_MS;
+      f.nibbleScale = Math.max(0, f.nibbleScale - 0.01 * TICK_MS / 16);
+      if (f.nibbleLeft <= 0) {
+        f.nibbleLeft = -1;
+        f.biteIn = biteTime(levelForExperience(this.params.state.experience[FISHING] ?? 0), false, Math.random);
+      }
+    }
+  }
+
+  private drawFishing() {
+    this.fishingUi ??= new FishingRenderer(this, HUD_DEPTH + 25);
+    const cam = this.cameras.main;
+    const f = this.fishing;
+    const b = farmerBox(this.body.x, this.body.y);
+    const playerScreen = { x: this.body.x - cam.scrollX, y: this.body.y - cam.scrollY };
+    this.fishingUi.draw({
+      playerScreen,
+      power: f?.phase === "charging" ? f.power : null,
+      bobberScreen: f?.bobber && !f.bar ? { x: f.bobber.x - cam.scrollX, y: f.bobber.y - cam.scrollY + (f.nibbleLeft > 0 ? Math.round(Math.sin(this.game.loop.time / 40) * 3) : 0) } : null,
+      nibble: f && f.nibbleLeft > 0 ? { x: b.x + b.w / 2 - cam.scrollX, y: b.y + b.h / 2 - 136 - cam.scrollY, scale: f.nibbleScale } : null,
+      bar: f?.bar ?? null,
+      facing: this.body.facing,
+      view: { w: cam.width, h: cam.height },
+      fishItem: f?.phase === "holding" ? f.fish?.id ?? null : null,
+      data: this.params.items,
+      ms: this.game.loop.time,
+    });
+  }
 
   private drawMachineBubbles() {
     let used = 0;
@@ -1771,11 +1949,11 @@ export class World extends Phaser.Scene {
   }
 
   private get timePasses() {
-    return !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.endingDay && !this.warping;
+    return !this.fishing?.bar && !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.endingDay && !this.warping;
   }
 
   private get canMove() {
-    return this.timePasses && !this.tool;
+    return this.timePasses && !this.tool && !this.fishing;
   }
 
   private onClockEvents(events: ReturnType<GameClock["tick"]>) {
@@ -1916,6 +2094,7 @@ export class World extends Phaser.Scene {
   }
 
   private simulate() {
+    this.tickFishing();
     const pressed = this.pressed();
     if (!this.canMove) pressed.clear();
     this.tickTool();
@@ -1945,7 +2124,7 @@ export class World extends Phaser.Scene {
     this.weatherFx?.draw(flags, this.outdoors, this.cameras.main, time);
     this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: flags.raining }));
     this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
-    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.dialogueBox?.open && !this.question?.open);
+    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.dialogueBox?.open && !this.question?.open && !this.fishing?.bar);
     this.dialogueBox?.update(this.game.loop.rawDelta);
     this.shipping?.update(Math.min(250, this.game.loop.rawDelta));
     const pointer = this.input.activePointer;
@@ -2020,6 +2199,7 @@ export class World extends Phaser.Scene {
     }
     this.placeSprites();
     this.drawMachineBubbles();
+    this.drawFishing();
     this.updateCamera();
     this.drawWater();
     this.redrawDirt();

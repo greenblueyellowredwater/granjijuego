@@ -287,6 +287,35 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
+    "pesca la primera vez un pez de tutorial con la barra",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=Town&x=77&y=85&time=1000`);
+      await page.evaluate(`localStorage.clear()`);
+      await page.goto(`${BASE}/?map=Town&x=77&y=85&time=1000`);
+      await waitStatus(page, /Town .* tile 77,85/);
+      await new Promise((r) => setTimeout(r, 800));
+      await world(`(w.params.state.inventory[6] = { id: "(T)TrainingRod", stack: 1 }, w.selectSlot(6), w.body.facing = 2, 1)`);
+      await page.keyboard.down("c");
+      await new Promise((r) => setTimeout(r, 600));
+      await page.keyboard.up("c");
+      await new Promise((r) => setTimeout(r, 300));
+      if ((await world(`w.fishing && w.fishing.phase`)) !== "waiting") throw new Error("El lance no cayó al agua");
+      await world(`(w.fishing.biteIn = 50, 1)`);
+      await new Promise((r) => setTimeout(r, 300));
+      await page.keyboard.press("c");
+      await new Promise((r) => setTimeout(r, 1000));
+      if (!(await world(`!!(w.fishing && w.fishing.bar)`))) throw new Error("No empezó el minijuego");
+      await page.screenshot({ path: `${OUT}/fishing-bar.png` });
+      for (let i = 0; i < 60 && (await world(`!!(w.fishing && w.fishing.bar)`)); i++) {
+        await world(`(w.fishing.bar.bobberPosition = w.fishing.bar.bobberBarPos + w.fishing.bar.bobberBarHeight / 2 - 10, 1)`);
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      const got = (await world(`JSON.stringify({ fish: w.params.state.inventory.some(function (i) { return i && i.id === "(O)145"; }), xp: w.params.state.experience[1] > 0 })`)) as string;
+      if (got !== '{"fish":true,"xp":true}') throw new Error(`Resultado de pesca: ${got}`);
+    },
+  ],
+  [
     "abre el regalo, siembra, riega y cosecha una chirivía a los 4 días",
     async (page) => {
       const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
