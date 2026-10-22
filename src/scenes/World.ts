@@ -20,7 +20,7 @@ import { sortSocialEntries, type SocialEntry } from "../render/social-page.ts";
 import { canCraft, consumeIngredients, countIngredient, layoutRecipes, parseRecipe, type Recipe, type RecipeSlot } from "../world/crafting.ts";
 import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, parseText, TOOL_CATEGORY_COLOR, type TooltipContent } from "../render/tooltip.ts";
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
-import { dayTileGlows, locationLights, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
+import { dayTileGlows, locationLights, torchLight, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
 import { LightingOverlay } from "../render/lighting.ts";
 import { DIALOGUE_FONT, Hud, HUD_DEPTH, type HudStrings } from "../render/hud.ts";
 import { QuestionBox } from "../render/question.ts";
@@ -44,7 +44,7 @@ import {
 import { addItem, canStackWith, consumeOne, isPlaceableObject, maximumStack } from "../world/items.ts";
 
 const MAX_ITEMS = 12;
-import { afterHarvest, cropDrawMath, harvestQuality, isHarvestable, isInSeason, newCrop, type CropData } from "../world/crops.ts";
+import { afterHarvest, cropDrawMath, harvestQuality, isHarvestable, isInSeason, newCrop, applySpeedIncreases, type CropData } from "../world/crops.ts";
 import { dayUpdateLocations } from "../world/day.ts";
 import { debrisDrops, debrisKind, spawnDebris, stepDebris, toolBreaks, type ItemDebris } from "../world/debris.ts";
 import { itemSprite } from "../world/items.ts";
@@ -59,7 +59,7 @@ import { SPRITE_TEXT_TEXTURE } from "../render/spritetext.ts";
 import { ShopMenu } from "../render/shop-menu.ts";
 import { objectBasePrice, shopStock, type ShopData } from "../world/shops.ts";
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
-import { animationSprite, canApplyFertilizer, canTill, fertilizerQualityLevel, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
+import { animationSprite, canApplyFertilizer, canTill, fertilizerQualityLevel, fertilizerSpeedBoost, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
 import { FARMING, farmerTitleKey, FORAGING, gainExperience, harvestExperience, levelForExperience, MINING } from "../world/skills.ts";
 import { checkConditions, daySaveRandom, type GsqState } from "../world/gsq.ts";
@@ -471,6 +471,8 @@ export class World extends Phaser.Scene {
       const dirt = this.dirtAt(tx, ty);
       if (dirt && canApplyFertilizer(dirt, item.id)) {
         dirt.fertilizer = item.id;
+        const cropData = dirt.crop ? this.params.crops[dirt.crop.seed] : undefined;
+        if (dirt.crop && cropData) applySpeedIncreases(dirt.crop, cropData, fertilizerSpeedBoost(item.id), state.professions.includes(5));
         consumeOne(state.inventory, state.currentToolIndex);
         this.dirtDirty = true;
       }
@@ -482,6 +484,7 @@ export class World extends Phaser.Scene {
     const entity: Entity = type === "BC" ? { kind: "bigCraftable", x: tx, y: ty, itemId: id } : { kind: "object", x: tx, y: ty, itemId: id, placed: true };
     this.entities.push(entity);
     this.addEntitySprites(entity);
+    this.addObjectLights();
     consumeOne(state.inventory, state.currentToolIndex);
     this.staticSolids = this.entities.flatMap((x) => this.solidsOf(x));
     this.location.setSolids(this.staticSolids);
@@ -541,6 +544,7 @@ export class World extends Phaser.Scene {
     if (placed) {
       if (tool !== "pickaxe" && tool !== "axe") return false;
       this.removeEntity(placed);
+      this.addObjectLights();
       this.dropItems([placed.kind === "bigCraftable" ? `(BC)${placed.itemId}` : `(O)${placed.itemId}`], tx, ty);
       this.params.store.save(this.params.state);
       return true;
@@ -711,6 +715,7 @@ export class World extends Phaser.Scene {
       return true;
     }
     dirt.crop = newCrop(id, data, Math.random() < 0.5);
+    applySpeedIncreases(dirt.crop, data, fertilizerSpeedBoost(dirt.fertilizer), state.professions.includes(5));
     consumeOne(state.inventory, state.currentToolIndex);
     this.dirtDirty = true;
     return true;
@@ -891,6 +896,16 @@ export class World extends Phaser.Scene {
       else glows = [];
     }
     this.lightSources = locationLights(this.location.name, this.location.props, glows, { turnOff, raining });
+    this.addObjectLights();
+  }
+
+  private addObjectLights() {
+    this.lightSources = this.lightSources.filter((l) => !l.id.startsWith("torch_"));
+    for (const e of this.entities) {
+      if (e.kind !== "object" || !e.placed) continue;
+      const tags = (this.params.items.objects[e.itemId] as { ContextTags?: string[] } | undefined)?.ContextTags ?? [];
+      if (tags.includes("torch_item")) this.lightSources.push(torchLight(e.itemId, e.x, e.y));
+    }
   }
 
   private setupWater() {

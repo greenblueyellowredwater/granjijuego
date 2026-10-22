@@ -117,3 +117,21 @@ export function afterHarvest(c: CropState, data: CropData | undefined) {
   }
   return null;
 }
+
+export function applySpeedIncreases(c: CropState, data: CropData, boost: number, agriculturist: boolean) {
+  if (boost === 0 && !agriculturist) return;
+  c.phaseDays = [...data.DaysInPhase, 99999];
+  let total = 0;
+  for (let i = 0; i < c.phaseDays.length - 1; i++) total += c.phaseDays[i];
+  const speed = Math.fround(boost + (agriculturist ? Math.fround(0.1) : 0));
+  let remove = Math.ceil(Math.fround(total * speed));
+  for (let pass = 0; remove > 0 && pass < 3; pass++) {
+    for (let i = 0; i < c.phaseDays.length; i++) {
+      if ((i > 0 || c.phaseDays[i] > 1) && c.phaseDays[i] !== 99999 && c.phaseDays[i] > 0) {
+        c.phaseDays[i]--;
+        remove--;
+      }
+      if (remove <= 0) break;
+    }
+  }
+}

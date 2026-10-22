@@ -1036,9 +1036,18 @@ Aproximaciones: sin cocina y sin cofres como fuente de materiales.
 
 **Pilas** (`Object.maximumStackSize`): `(O)` y `(BC)` hasta 999, salvo 79, 842, 911 y los aparejos (−22), que van de a 1. El resto de los ítems va de a 1.
 
+**Speed-Gro** (`HoeDirt.applySpeedIncreases`, al plantar o al fertilizar):
+- Con aumento > 0 o con Agricultor (profesión 5), las fases se reinician desde los datos.
+- Se calcula `quitar = ⌈total·(aumento + 0,1 si es Agricultor)⌉`, con total = suma de las fases sin la última.
+- Hasta 3 pasadas restan 1 día a cada fase con días > 0 y distinta de 99999, salteando la fase 0 si tiene 1 día. Se corta al llegar a 0.
+
+**Luz de antorcha** (`Object.initializeLightSource`, objetos con etiqueta `torch_item`):
+- Textura 4, centro `(x·64+16, y·64+16)` y radio 1,25.
+- Color `(1,1,1)·0,9` (amarillo para 94, (70,0,150) para 95).
+- Se agrega al colocar y se quita al levantar.
+
 Aproximaciones:
-- Sin efecto de velocidad en las fases.
-- Sin luz ni llama animada en la antorcha.
+- Sin llama animada en la antorcha.
 - Sin cerca conectada, caminos (`Flooring`) ni retoños.
 - Interfaz de cofre: ver spec S20.
 

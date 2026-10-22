@@ -28,3 +28,17 @@ describe("colocación y fertilizante", () => {
     expect(canApplyFertilizer({ crop: { phase: 1 } }, "(O)465")).toBe(true);
   });
 });
+
+describe("Speed-Gro", async () => {
+  const { applySpeedIncreases, newCrop } = await import("../src/world/crops.ts");
+  it("acorta fases como HoeDirt.applySpeedIncreases", () => {
+    const data = { DaysInPhase: [1, 1, 1, 1], SpriteIndex: 0, HarvestItemId: "24", Seasons: ["spring"] } as never;
+    const c = newCrop("472", data, false);
+    applySpeedIncreases(c, data, 0.1, false);
+    expect(c.phaseDays).toEqual([1, 0, 1, 1, 99999]);
+    const cauliflower = { DaysInPhase: [1, 2, 4, 4, 1], SpriteIndex: 0, HarvestItemId: "190", Seasons: ["spring"] } as never;
+    const d = newCrop("474", cauliflower, false);
+    applySpeedIncreases(d, cauliflower, 0.25, true);
+    expect(d.phaseDays.slice(0, -1).reduce((a: number, b: number) => a + b, 0)).toBe(12 - 5);
+  });
+});

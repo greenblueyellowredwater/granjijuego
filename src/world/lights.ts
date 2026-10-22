@@ -125,3 +125,8 @@ export function lightQuad(l: LightSource, texture: { width: number; height: numb
   const cx = (l.x - scrollX) / LIGHTMAP_SCALE, cy = (l.y - scrollY) / LIGHTMAP_SCALE;
   return { x: cx - (texture.width / 2) * scale, y: cy - (texture.height / 2) * scale, w, h, alpha: l.color[3] / 255 };
 }
+
+export function torchLight(itemId: string, x: number, y: number): LightSource {
+  const color: [number, number, number, number] = itemId === "94" ? [229, 229, 0, 229] : itemId === "95" ? [63, 0, 135, 229] : [0, 0, 0, 229];
+  return { id: `torch_${x}_${y}`, texture: 4, x: x * 64 + 16, y: y * 64 + 16, radius: 1.25, color, context: LightContext.None, fadeOut: -1 };
+}
