@@ -1,4 +1,4 @@
-import { parseId, type Item } from "./items.ts";
+import { canStackWith, parseId, type Item } from "./items.ts";
 
 const FORAGE_IDS = new Set(["(O)396", "(O)406", "(O)296", "(O)402", "(O)418", "(O)414", "(O)410"]);
 const BY_CATEGORY: Record<number, number> = {
@@ -22,7 +22,7 @@ export interface ShippingSummary {
 export function consolidateStacks(items: Item[]) {
   const out: Item[] = [];
   for (const it of items) {
-    const same = out.find((o) => o.id === it.id && (o.quality ?? 0) === (it.quality ?? 0));
+    const same = out.find((o) => canStackWith(o, it));
     if (same) same.stack += it.stack;
     else out.push({ ...it });
   }

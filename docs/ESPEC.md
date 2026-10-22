@@ -1064,6 +1064,54 @@ Aproximaciones:
 
 Aproximaciones: sin selector de color, sin ordenar, sin animación de tapa ni del ítem transferido y sin tacho funcional en este menú.
 
+## Spec S21: máquinas (`Data/Machines`, `MachineDataUtility`)
+
+**Cargar** (acción sobre un gran fabricable con datos de máquina y un objeto `(O)` en la mano; `PlaceInMachine`):
+- Solo si la máquina está vacía.
+- Regla: la primera de `OutputRules` con un disparador `ItemPlacedInMachine` (bit 1) cuya `Condition` (GSQ) se cumpla.
+  - `RequiredItemId` igual al id calificado.
+  - `RequiredTags` coinciden todas con las etiquetas de contexto; las que empiezan con `!` deben faltar.
+  - `RequiredCount ≤ pila`.
+  - Si solo falla la cantidad, se muestra `InvalidCountMessage`.
+- `AdditionalConsumedItems` (p. ej. 1 carbón en el horno) debe estar en el inventario; si no, se muestra su mensaje.
+- Se consume `RequiredCount` de la entrada y los adicionales.
+- Salida: el primer `OutputItem` cuya condición se cumpla.
+  - `ItemId` fijo, `DROP_IN` (copia de la entrada) o `FLAVORED_ITEM <Tipo> <DROP_IN_ID|id>`.
+  - `RandomItemId` elige uno.
+  - Respeta `MinStack/MaxStack`, `Quality`, `CopyQuality` y `CopyPrice`.
+- Tiempo: `MinutesUntilReady` si es ≥ 0. Si no, con `DaysUntilReady` es `minutos hasta la mañana`: `(1560 − minutos(hora)) + 400 + (días−1)·1600`.
+- `ShowNextIndexWhileWorking` dibuja el sprite +1.
+
+**Productos saborizados** (`ObjectDataDefinition.CreateFlavored*`). Base `p` = precio y `e` = comestibilidad de la entrada:
+
+| Producto | Id | Precio | Comestibilidad |
+| --- | --- | --- | --- |
+| Vino | 348 | `3p` | `e·1,75f` si e > 0 |
+| Jugo | 350 | `trunc(p·2,25f)` | `2e`, o `p·0,4` si e = −300 |
+| Jalea | 344 | `2p+50` | `2e`, o `p·0,2` |
+| Encurtido | 342 | `2p+50` | `e·1,75f`, o `p·0,25` |
+| Miel | 340 | `precio_miel + 2p` | — |
+
+- Color: el de `TailoringMenu.GetDyeColor`. Es blanco para `(O)74`. Si no, sale de la primera etiqueta `color_*` según la tabla de `ItemContextTagManager.GetColorFromTags` (por ejemplo, color_blue (46,85,183) y color_yellow (255,230,0)).
+- Nombre: `Strings\Objects:<Tipo>_Flavored_Name` con `{0}` = nombre del ingrediente (Wine, Jelly, Pickles, Juice, etc.).
+- Con `ColorOverlayFromNextIndex`, el ícono se dibuja normal y el índice de sprite +1 encima, teñido con el color.
+- Apilan solo si coinciden id, calidad, precio y conserva.
+
+**Tiempo**:
+- Cada 10 minutos de reloj, todas las máquinas de todas las ubicaciones restan 10 (`minutesElapsed`).
+- Al dormir restan los minutos hasta la mañana desde la hora actual.
+- Al llegar a 0 quedan listas, y se muestra el sprite +1 solo con `ShowNextIndexWhenReady`.
+
+**Lista**:
+- Burbuja `Cursors (141,465,20,24)` ×4 a 0,75 en `(x·64−8, y·64−112+b)`, con `b = 4·round(sin(ms/250), 2)`.
+- El producto va ×4 a 0,75 centrado en `(x·64+32, y·64−72+b)`.
+- La acción sobre la máquina lista pasa el producto al inventario (si entra) y vacía la máquina.
+
+Aproximaciones:
+- Sin efectos de carga ni de trabajo (humo, sonido, temblor), sin luz de trabajo y sin experiencia al recoger.
+- Sin máquinas que no usan `ItemPlacedInMachine` (colmenas, paneles, etc.) ni `OutputMethod`.
+- Sin `ReadyTimeModifiers`.
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:

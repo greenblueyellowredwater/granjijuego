@@ -233,6 +233,33 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
+    "carga un horno y un barril y recoge barra y vino",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=FarmHouse&x=5&y=9&time=900`);
+      await page.evaluate(`localStorage.clear()`);
+      await page.goto(`${BASE}/?map=FarmHouse&x=5&y=9&time=900`);
+      await waitStatus(page, /FarmHouse .* tile 5,9/);
+      await world(`(w.params.state.inventory[6] = { id: "(BC)13", stack: 1, quality: 0 }, w.params.state.inventory[7] = { id: "(O)378", stack: 5, quality: 0 }, w.params.state.inventory[8] = { id: "(O)382", stack: 1, quality: 0 }, w.params.state.inventory[9] = { id: "(BC)12", stack: 1, quality: 0 }, w.params.state.inventory[10] = { id: "(O)258", stack: 1, quality: 0 }, 1)`);
+      const step = async (slot: number, facing: number, key: KeyInput) => {
+        await world(`(w.selectSlot(${slot}), w.body.facing = ${facing}, 1)`);
+        await page.keyboard.press(key);
+        await new Promise((r) => setTimeout(r, 250));
+      };
+      await step(6, 3, "c");
+      await step(9, 1, "c");
+      await step(7, 3, "x");
+      await step(10, 1, "x");
+      await world(`(w.tickMachines(20000), 1)`);
+      await new Promise((r) => setTimeout(r, 300));
+      await page.screenshot({ path: `${OUT}/machines.png` });
+      await step(0, 3, "x");
+      await step(0, 1, "x");
+      const got = (await world(`JSON.stringify(w.params.state.inventory.filter(Boolean).map(function (i) { return i.id + (i.price ? "@" + i.price : ""); }))`)) as string;
+      if (!got.includes('"(O)334"') || !got.includes('"(O)348@150"')) throw new Error(`Salida de máquinas: ${got}`);
+    },
+  ],
+  [
     "abre el regalo, siembra, riega y cosecha una chirivía a los 4 días",
     async (page) => {
       const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);

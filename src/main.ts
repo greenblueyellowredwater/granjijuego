@@ -1,3 +1,4 @@
+import type { MachineData } from "./world/machines.ts";
 import Phaser from "phaser";
 import { contentUrl, loadManifest, SEASONS, type Manifest, type Season } from "./content.ts";
 import { MapViewer } from "./scenes/MapViewer.ts";
@@ -163,6 +164,7 @@ async function boot() {
   const weaponStrings = (await load("Strings/Weapons").catch(() => ({}))) as Record<string, string>;
   const bigCraftables = (await load("Data/BigCraftables").catch(() => ({}))) as ItemData["bigCraftables"];
   terrain.bigCraftables = bigCraftables;
+  const machines = (await load("Data/Machines").catch(() => ({}))) as Record<string, MachineData>;
   const craftingRecipes = (await load("Data/CraftingRecipes").catch(() => ({}))) as Record<string, string>;
   const cookingRecipes = (await load("Data/CookingRecipes").catch(() => ({}))) as Record<string, string>;
   const bigCraftableStrings = (await load("Strings/BigCraftables").catch(() => ({}))) as Record<string, string>;
@@ -215,6 +217,7 @@ async function boot() {
     shops,
     strings: { "Strings\\Objects": objectStrings, "Strings\\StringsFromCSFiles": csStrings, "Strings\\Locations": locationStrings, "Strings\\UI": uiStrings, "Strings\\Tools": toolStrings, "Strings\\Weapons": weaponStrings, "Strings\\NPCNames": npcNameStrings, "Strings\\BigCraftables": bigCraftableStrings },
     recipes: { crafting: craftingRecipes, cooking: cookingRecipes },
+    machines,
     items: {
       tools,
       weapons,

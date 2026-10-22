@@ -14,6 +14,7 @@ import { LevelUpMenu } from "../render/levelup-menu.ts";
 import { ShippingMenu } from "../render/shipping-menu.ts";
 import { ChestMenu } from "../render/chest-menu.ts";
 import { summarizeShipping } from "../world/shipping.ts";
+import { createOutput, findRule, minutesElapsed, minutesUntilMorning, preserveNameKey, readyMinutes, type MachineData, type MachineState } from "../world/machines.ts";
 import { extraInfoKeys, learnDefaultRecipes, professionChoices, recipesUnlockedAt } from "../world/levelup.ts";
 import { sortSocialEntries, type SocialEntry } from "../render/social-page.ts";
 import { canCraft, consumeIngredients, countIngredient, layoutRecipes, parseRecipe, type Recipe, type RecipeSlot } from "../world/crafting.ts";
@@ -40,7 +41,7 @@ import {
   type FrameBehavior,
   type ToolKind,
 } from "../world/tools.ts";
-import { addItem, consumeOne, isPlaceableObject, maximumStack } from "../world/items.ts";
+import { addItem, canStackWith, consumeOne, isPlaceableObject, maximumStack } from "../world/items.ts";
 
 const MAX_ITEMS = 12;
 import { afterHarvest, cropDrawMath, harvestQuality, isHarvestable, isInSeason, newCrop, type CropData } from "../world/crops.ts";
@@ -164,6 +165,7 @@ export interface WorldData {
   recipes: { crafting: Record<string, string>; cooking: Record<string, string> };
   characters: Record<string, CharacterData>;
   shops: Record<string, ShopData>;
+  machines: Record<string, MachineData>;
   strings: Record<string, Record<string, string>>;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
@@ -257,6 +259,7 @@ export class World extends Phaser.Scene {
     this.animator = new FarmerAnimator();
     this.fadingTrees = [];
     this.entityImages = new Map();
+    this.bubbleImages = [];
     this.treeMotions = new Map();
     this.npcImages = new Map();
     this.staticSolids = [];
@@ -342,7 +345,7 @@ export class World extends Phaser.Scene {
     }
     textures.add(SPRITE_TEXT_TEXTURE);
     textures.add(EMOTE_TEXTURE);
-    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont", "LooseSprites/Cursors2", "TileSheets/BuffsIcons", "TileSheets/Craftables"]) textures.add(t);
+    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont", "LooseSprites/Cursors2", "TileSheets/BuffsIcons", "TileSheets/Craftables", "TileSheets/Objects_2", "Maps/springobjects", "TileSheets/tools", "TileSheets/weapons"]) textures.add(t);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
     }
@@ -1127,6 +1130,120 @@ export class World extends Phaser.Scene {
 
   private openChestEntity: Extract<Entity, { kind: "bigCraftable" }> | null = null;
 
+  private tryMachine(tx: number, ty: number) {
+    const e = this.entities.find((x): x is Extract<Entity, { kind: "bigCraftable" }> => x.kind === "bigCraftable" && x.x === tx && x.y === ty);
+    const data = e ? this.params.machines[`(BC)${e.itemId}`] : undefined;
+    if (!e || !data) return false;
+    const { state, items } = this.params;
+    const m: MachineState = (e.machine ??= {});
+    if (m.ready && m.held) {
+      const target = state.inventory.slice(0, MAX_ITEMS).map((it) => (it ? { ...it } : null));
+      if (addItem(target, m.held)) {
+        this.message = this.params.text.inventoryFull;
+        return true;
+      }
+      for (let i = 0; i < MAX_ITEMS; i++) state.inventory[i] = target[i];
+      e.machine = {};
+      this.refreshEntity(e);
+      this.params.store.save(state);
+      return true;
+    }
+    const input = state.inventory[state.currentToolIndex];
+    if (!input || m.held || parseId(input.id).type !== "O") return false;
+    const objects = items.objects as Parameters<typeof findRule>[2];
+    const gsq = this.gsqState();
+    const found = findRule(data, input, objects, (q) => checkConditions(q, { state: gsq, random: new DotNetRandom(Math.floor(Math.random() * 2147483647)) }));
+    const cs = this.params.strings["Strings\\StringsFromCSFiles"] ?? {};
+    if (!found.rule || !found.trigger) {
+      if (found.countFail) this.message = this.localized(data.InvalidCountMessage ?? "").replace("{0}", String(found.countFail.trigger.RequiredCount ?? 1)) || cs["Object.cs.12777"] || "";
+      return found.countFail !== null;
+    }
+    for (const extra of data.AdditionalConsumedItems ?? []) {
+      const have = state.inventory.slice(0, MAX_ITEMS).reduce((n, it) => n + (it && it.id === extra.ItemId ? it.stack : 0), 0);
+      if (have < extra.RequiredCount) {
+        this.message = this.localized(extra.InvalidCountMessage ?? "").replace("{0}", String(extra.RequiredCount));
+        return true;
+      }
+    }
+    const output = (found.rule.OutputItem ?? []).find((o) => !o.Condition || checkConditions(o.Condition, { state: gsq, random: new DotNetRandom(1) }));
+    const item = output ? createOutput(output, input, objects) : null;
+    if (!item) return false;
+    const count = found.trigger.RequiredCount ?? 1;
+    input.stack -= count;
+    if (input.stack <= 0) state.inventory[state.currentToolIndex] = null;
+    for (const extra of data.AdditionalConsumedItems ?? []) {
+      let left = extra.RequiredCount;
+      for (let i = 0; i < MAX_ITEMS && left > 0; i++) {
+        const it = state.inventory[i];
+        if (!it || it.id !== extra.ItemId) continue;
+        const take = Math.min(left, it.stack);
+        it.stack -= take;
+        left -= take;
+        if (it.stack <= 0) state.inventory[i] = null;
+      }
+    }
+    const minutes = readyMinutes(found.rule, this.params.clock.time);
+    e.machine = { held: item, minutesLeft: minutes, ready: minutes <= 0, showNext: !!data.ShowNextIndexWhileWorking };
+    this.refreshEntity(e);
+    this.params.store.save(state);
+    return true;
+  }
+
+  private tickMachines(minutes: number) {
+    const { state, machines } = this.params;
+    for (const [name, loc] of Object.entries(state.locations)) {
+      for (const e of loc.entities) {
+        if (e.kind !== "bigCraftable" || !e.machine?.held || e.machine.ready) continue;
+        minutesElapsed(e.machine, minutes);
+        if (e.machine.ready) {
+          e.machine.showNext = !!machines[`(BC)${e.itemId}`]?.ShowNextIndexWhenReady;
+          if (this.location && name === this.location.name) this.refreshEntity(e);
+        }
+      }
+    }
+  }
+
+  private bubbleImages: Phaser.GameObjects.Image[] = [];
+
+  private drawMachineBubbles() {
+    let used = 0;
+    const img = (texture: string, sx: number, sy: number, sw: number, sh: number) => {
+      if (!this.textures.exists(texture)) return null;
+      const tex = this.textures.get(texture);
+      const frame = `${sx},${sy},${sw},${sh}`;
+      if (!tex.has(frame)) tex.add(frame, 0, sx, sy, sw, sh);
+      let i = this.bubbleImages[used];
+      if (!i) {
+        i = this.add.image(0, 0, texture, frame);
+        this.bubbleImages.push(i);
+      }
+      used++;
+      return i.setTexture(texture, frame).setOrigin(0, 0).setScale(PIXEL_SCALE).setTint(0xffffff).setAlpha(1).setVisible(true);
+    };
+    const bob = 4 * Math.round(Math.sin(this.game.loop.time / 250) * 100) / 100;
+    for (const e of this.entities) {
+      if (e.kind !== "bigCraftable" || !e.machine?.ready || !e.machine.held) continue;
+      const base = ((e.y + 1) * TILE) / 10000 + e.x / 50000;
+      img("LooseSprites/Cursors", 141, 465, 20, 24)?.setPosition(e.x * TILE - 8, e.y * TILE - 112 + bob).setAlpha(0.75).setDepth(this.rendered.spriteDepth(base + 1e-6));
+      const sprite = itemSprite(e.machine.held, this.params.items);
+      if (!sprite) continue;
+      const overlay = e.machine.held.color && (this.params.items.objects[parseId(e.machine.held.id).id] as { ColorOverlayFromNextIndex?: boolean } | undefined)?.ColorOverlayFromNextIndex;
+      const tint = e.machine.held.color ? (e.machine.held.color[0] << 16) | (e.machine.held.color[1] << 8) | e.machine.held.color[2] : 0xffffff;
+      img(sprite.texture, sprite.sx, sprite.sy, sprite.sw, sprite.sh)?.setOrigin(0.5, 0.5).setPosition(e.x * TILE + 32, e.y * TILE - 72 + bob).setAlpha(0.75).setTint(overlay ? 0xffffff : tint).setDepth(this.rendered.spriteDepth(base + 1e-5));
+      if (overlay) {
+        const width = this.params.items.textureWidths[sprite.texture] ?? 384;
+        img(sprite.texture, (sprite.sx + 16) % width, sprite.sy + (sprite.sx + 16 >= width ? 16 : 0), 16, 16)?.setOrigin(0.5, 0.5).setPosition(e.x * TILE + 32, e.y * TILE - 72 + bob).setAlpha(0.75).setTint(tint).setDepth(this.rendered.spriteDepth(base + 1.1e-5));
+      }
+    }
+    for (let i = used; i < this.bubbleImages.length; i++) this.bubbleImages[i].setVisible(false);
+  }
+
+  private refreshEntity(e: Entity) {
+    for (const img of this.entityImages.get(e) ?? []) img.destroy();
+    this.entityImages.delete(e);
+    this.addEntitySprites(e);
+  }
+
   private tryOpenChest(tx: number, ty: number) {
     const chest = this.entities.find((e): e is Extract<Entity, { kind: "bigCraftable" }> => e.kind === "bigCraftable" && e.x === tx && e.y === ty && (e.itemId === "130" || e.itemId === "232"));
     if (!chest || !this.chestMenu) return false;
@@ -1220,7 +1337,7 @@ export class World extends Phaser.Scene {
     else if (hit.kind === "slot") {
       if (hit.slot >= MAX_ITEMS) return;
       const there = inv[hit.slot] ?? null;
-      if (menu.held && there && there.id === menu.held.id && (there.quality ?? 0) === (menu.held.quality ?? 0) && maximumStack(there) > 1) {
+      if (menu.held && there && canStackWith(there, menu.held) && maximumStack(there) > 1) {
         const room = maximumStack(there) - there.stack;
         const moved = Math.min(room, menu.held.stack);
         there.stack += moved;
@@ -1344,12 +1461,12 @@ export class World extends Phaser.Scene {
     let title = id, description = "", category = "", color = 0x000000, edibility: number | null = null;
     if (type === "O") {
       const data = this.params.items.objects[id] as { DisplayName?: string; Description?: string; Category?: number; Edibility?: number; Type?: string } | undefined;
-      title = this.localized(data?.DisplayName) || id;
+      title = this.displayNameOf(item);
       description = this.localized(data?.Description);
       const key = categoryNameKey(data?.Category ?? 0);
       category = key && !key.startsWith("1_6:") ? cs[key] ?? "" : "";
       color = data?.Type === "Arch" ? ARCH_CATEGORY_COLOR : categoryColor(data?.Category ?? 0);
-      const e = data?.Edibility ?? -300;
+      const e = item.edibility ?? data?.Edibility ?? -300;
       edibility = e !== -300 ? e : null;
     } else if (type === "BC") {
       const data = this.params.items.bigCraftables?.[id];
@@ -1427,6 +1544,16 @@ export class World extends Phaser.Scene {
     return text.replace(/\[LocalizedText ([^\]:]+):([^\]\s]+)\]/g, (_m, file: string, key: string) => this.params.strings[file]?.[key] ?? key);
   }
 
+  private displayNameOf(item: Item) {
+    if (item.preserve) {
+      const objectStrings = this.params.strings["Strings\\Objects"] ?? {};
+      const ingredient = this.itemName(`(O)${item.preserve.id}`);
+      const pattern = objectStrings[preserveNameKey(item.preserve.type)];
+      if (pattern) return pattern.replace("{0}", ingredient);
+    }
+    return this.itemName(item.id);
+  }
+
   private itemName(qualified: string) {
     const { type, id } = parseId(qualified);
     if (type === "O") return this.localized((this.params.items.objects[id] as { DisplayName?: string } | undefined)?.DisplayName) || id;
@@ -1474,7 +1601,7 @@ export class World extends Phaser.Scene {
       const item = state.inventory[hit.slot];
       if (!item || parseId(item.id).type !== "O") return;
       const data = this.params.items.objects[parseId(item.id).id];
-      const price = sellPrice(data?.Price ?? 0, item.quality ?? 0);
+      const price = sellPrice(item.price ?? data?.Price ?? 0, item.quality ?? 0);
       if (price <= 0) return;
       earn(state, price * item.stack);
       state.inventory[hit.slot] = null;
@@ -1494,6 +1621,7 @@ export class World extends Phaser.Scene {
     const t = facingTile(this.body);
     const npc = this.npcAt(t.x, t.y);
     if (this.tryOpenChest(t.x, t.y)) return;
+    if (this.tryMachine(t.x, t.y)) return;
     if (npc && this.tryGift(npc)) return;
     if (npc && this.talkTo(npc)) return;
     if (this.tryOpenGiftbox(t.x, t.y)) return;
@@ -1539,6 +1667,7 @@ export class World extends Phaser.Scene {
         this.applyTiles("NightTiles");
       } else if (e.kind === "late" && e.time === 2400) this.message = this.params.text.late;
       else if (e.kind === "passOut") this.endDay();
+      else if (e.kind === "tenMinutes") this.tickMachines(10);
     }
   }
 
@@ -1560,11 +1689,12 @@ export class World extends Phaser.Scene {
     const { state, store, clock } = this.params;
     this.cameras.main.fade(1000, 0, 0, 0, true);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      this.tickMachines(minutesUntilMorning(clock.time));
       const shipped = state.shipping;
       const yesterday = this.dateString(state.dayOfMonth, state.season, state.year);
       for (const item of shipped) {
         const data = this.params.items.objects[parseId(item.id).id];
-        earn(state, sellPrice(data?.Price ?? 0, item.quality ?? 0) * item.stack);
+        earn(state, sellPrice(item.price ?? data?.Price ?? 0, item.quality ?? 0) * item.stack);
       }
       state.shipping = [];
       this.pendingShipping = shipped.length ? { items: shipped, date: yesterday } : null;
@@ -1599,7 +1729,7 @@ export class World extends Phaser.Scene {
     if (pending && this.shipping) {
       this.cameras.main.resetFX();
       const objects = this.params.items.objects;
-      const summary = summarizeShipping(pending.items, (it) => objects[parseId(it.id).id]?.Category, (it) => sellPrice(objects[parseId(it.id).id]?.Price ?? 0, it.quality ?? 0));
+      const summary = summarizeShipping(pending.items, (it) => objects[parseId(it.id).id]?.Category, (it) => sellPrice(it.price ?? objects[parseId(it.id).id]?.Price ?? 0, it.quality ?? 0));
       const cs = this.params.strings["Strings\\StringsFromCSFiles"] ?? {};
       this.shipping.show(summary, [11389, 11390, 11391, 11392, 11393, 11394].map((k) => cs[`ShippingMenu.cs.${k}`] ?? ""), pending.date, this.params.state.season === "winter");
       return;
@@ -1770,6 +1900,7 @@ export class World extends Phaser.Scene {
       if (ticks === MAX_TICKS_PER_FRAME) this.accumulator = 0;
     }
     this.placeSprites();
+    this.drawMachineBubbles();
     this.updateCamera();
     this.drawWater();
     this.redrawDirt();

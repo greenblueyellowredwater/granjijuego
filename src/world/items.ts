@@ -2,7 +2,14 @@ export interface Item {
   id: string;
   stack: number;
   quality?: number;
+  price?: number;
+  preserve?: { type: number; id: string };
+  color?: [number, number, number];
+  edibility?: number;
 }
+
+export const canStackWith = (a: Item, b: Item) =>
+  a.id === b.id && (a.quality ?? 0) === (b.quality ?? 0) && a.price === b.price && a.preserve?.type === b.preserve?.type && a.preserve?.id === b.preserve?.id;
 
 export interface ItemData {
   tools: Record<string, { Texture?: string | null; SpriteIndex: number; MenuSpriteIndex?: number; ClassName?: string; UpgradeLevel?: number }>;
@@ -68,7 +75,7 @@ export function addItem(slots: (Item | null)[], item: Item): Item | null {
   let remaining = item.stack;
   const max = maximumStack(item);
   for (const s of slots) {
-    if (!s || s.id !== item.id || (s.quality ?? 0) !== (item.quality ?? 0) || remaining === 0) continue;
+    if (!s || !canStackWith(s, item) || remaining === 0) continue;
     const take = Math.min(max - s.stack, remaining);
     s.stack += take;
     remaining -= take;

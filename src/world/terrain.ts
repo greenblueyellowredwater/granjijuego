@@ -1,3 +1,4 @@
+import type { Item } from "./items.ts";
 import { TILE, type Location } from "./location.ts";
 import { createRandom, DotNetRandom } from "./dotnet-random.ts";
 import type { Rect } from "./movement.ts";
@@ -32,7 +33,7 @@ export type Entity =
   | { kind: "tree"; x: number; y: number; treeId: string; stage: number; flipped: boolean; health?: number; stump?: boolean }
   | { kind: "fruitTree"; x: number; y: number; treeId: string; stage: number }
   | { kind: "object"; x: number; y: number; itemId: string; placed?: boolean }
-  | { kind: "bigCraftable"; x: number; y: number; itemId: string; items?: ({ id: string; stack: number; quality?: number } | null)[] }
+  | { kind: "bigCraftable"; x: number; y: number; itemId: string; items?: (Item | null)[]; machine?: { held?: Item | null; minutesLeft?: number; ready?: boolean; showNext?: boolean } }
   | { kind: "clump"; x: number; y: number; index: number; w: number; h: number }
   | { kind: "bush"; x: number; y: number; size: number; flipped: boolean; townBush: boolean; drawShadow: boolean }
   | { kind: "grass"; x: number; y: number; grassType: number }
@@ -349,7 +350,7 @@ export function drawOps(e: Entity, data: TerrainData, season: SeasonName, grass?
     case "bigCraftable": {
       const bc = data.bigCraftables?.[e.itemId];
       if (!bc) return [];
-      const i = bc.SpriteIndex;
+      const i = bc.SpriteIndex + (e.machine?.showNext ? 1 : 0);
       return [{ texture: bc.Texture?.replace(/\\/g, "/") ?? "TileSheets/Craftables", sx: (i % 8) * 16, sy: Math.floor(i / 8) * 32, sw: 16, sh: 32, x: px, y: py - TILE, depth: Math.max(0, (py + TILE - 24) / 10000) + e.x / 100000, flip: false }];
     }
     case "clump":
