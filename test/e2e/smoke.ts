@@ -152,6 +152,35 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
+    "abre el inventario, mueve y tira ítems",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=FarmHouse&x=3&y=9&time=900`);
+      await page.evaluate(`localStorage.clear()`);
+      await page.goto(`${BASE}/?map=FarmHouse&x=3&y=9&time=900`);
+      await waitStatus(page, /FarmHouse .* tile 3,9/);
+      await world(`(w.params.state.inventory[6] = { id: "(O)24", stack: 5, quality: 0 }, 1)`);
+      await page.keyboard.press("e");
+      await new Promise((r) => setTimeout(r, 300));
+      if (!(await world(`w.gameMenu.open`))) throw new Error("No abrió el menú");
+      const t0 = await world(`w.params.clock.time`);
+      await page.mouse.click(672, 212);
+      await page.mouse.click(352, 212);
+      await page.mouse.click(672, 212);
+      const ids = (await world(`JSON.stringify([w.params.state.inventory[1].id, w.params.state.inventory[6].id, w.gameMenu.held])`)) as string;
+      if (ids !== '["(O)24","(T)Hoe",null]') throw new Error(`Intercambio inesperado: ${ids}`);
+      await page.screenshot({ path: `${OUT}/inventory.png` });
+      await page.mouse.click(672, 212);
+      await page.mouse.click(1133, 504);
+      if (await world(`w.params.state.inventory[6] !== null`)) throw new Error("No levantó el ítem");
+      if (await world(`w.gameMenu.held !== null`)) throw new Error("No tiró el ítem");
+      await page.keyboard.press("Escape");
+      await new Promise((r) => setTimeout(r, 300));
+      if (await world(`w.gameMenu.open`)) throw new Error("No cerró el menú");
+      if ((await world(`w.params.clock.time`)) !== t0) throw new Error("El reloj avanzó con el menú abierto");
+    },
+  ],
+  [
     "abre el regalo, siembra, riega y cosecha una chirivía a los 4 días",
     async (page) => {
       const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);

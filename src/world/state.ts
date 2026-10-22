@@ -24,6 +24,8 @@ export interface GameState {
   shipping: Item[];
   friendship: Record<string, { points: number; talkedToday: boolean }>;
   farmerName: string;
+  farmName: string;
+  totalEarned: number;
   appearance?: Appearance;
   locations: Record<string, { entities: Entity[] }>;
 }
@@ -48,6 +50,8 @@ export function newGameState(random = Math.random): GameState {
     shipping: [],
     friendship: {},
     farmerName: "Granjero",
+    farmName: "Valle",
+    totalEarned: 0,
     appearance: DEFAULT_APPEARANCE,
     locations: {},
   };
@@ -70,6 +74,8 @@ export function withDefaults(state: GameState): GameState {
     shipping: state.shipping ?? [],
     friendship: state.friendship ?? {},
     farmerName: state.farmerName ?? "Granjero",
+    farmName: state.farmName ?? "Valle",
+    totalEarned: state.totalEarned ?? 0,
   };
 }
 
@@ -125,4 +131,9 @@ export function locationEntities(state: GameState, name: string, generate: () =>
   const entities = generate();
   state.locations[name] = { entities };
   return { entities, created: true };
+}
+
+export function earn(state: GameState, amount: number) {
+  state.money += amount;
+  if (amount > 0) state.totalEarned += amount;
 }

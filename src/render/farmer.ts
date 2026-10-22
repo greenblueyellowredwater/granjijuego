@@ -51,6 +51,7 @@ export class FarmerSprite {
     clothing: ClothingData,
     private readonly featureX: number[],
     private readonly featureY: number[],
+    ui = false,
   ) {
     const keys = farmerTextureKeys(appearance);
     this.shirt = shirtInfo(appearance, clothing);
@@ -70,7 +71,11 @@ export class FarmerSprite {
       canvas.refresh();
     }
     this.textureFor = { base: recolored, pants: keys.pants, shirts: keys.shirts, hair: keys.hair };
-    for (let i = 0; i < 6; i++) this.images.push(scene.add.image(0, 0, recolored).setOrigin(0, 0).setScale(SCALE));
+    for (let i = 0; i < 6; i++) this.images.push(scene.add.image(0, 0, recolored).setOrigin(0, 0).setScale(SCALE).setScrollFactor(ui ? 0 : 1).setVisible(!ui));
+  }
+
+  hide() {
+    for (const img of this.images) img.setVisible(false);
   }
 
   private frame(texture: string, l: FarmerLayer) {

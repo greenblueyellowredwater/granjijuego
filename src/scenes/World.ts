@@ -4,11 +4,12 @@ import { queueTilemap, RenderedMap } from "../render/tilemap.ts";
 import { FarmerAnimator } from "../world/farmer-animation.ts";
 import { Location, TILE } from "../world/location.ts";
 import { DotNetRandom } from "../world/dotnet-random.ts";
-import { locationEntities, type GameState, type StateStore } from "../world/state.ts";
+import { earn, locationEntities, type GameState, type StateStore } from "../world/state.ts";
 import { buildWaterGrid, WATER_TEXTURE, waterColor, waterPieces, WaterState, type WaterGrid } from "../world/water.ts";
 import { DEPTH } from "../render/tilemap.ts";
 import { FarmerSprite, farmerTextureKeys } from "../render/farmer.ts";
-import { DEFAULT_APPEARANCE, type ClothingData } from "../world/farmer-appearance.ts";
+import { DEFAULT_APPEARANCE, pantsInfo, shirtInfo, type ClothingData } from "../world/farmer-appearance.ts";
+import { GameMenu, gameMenuLayout } from "../render/game-menu.ts";
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
 import { dayTileGlows, locationLights, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
 import { LightingOverlay } from "../render/lighting.ts";
@@ -31,7 +32,9 @@ import {
   type FrameBehavior,
   type ToolKind,
 } from "../world/tools.ts";
-import { addItem, consumeOne } from "../world/items.ts";
+import { addItem, consumeOne, maximumStack } from "../world/items.ts";
+
+const MAX_ITEMS = 12;
 import { afterHarvest, cropDrawMath, harvestQuality, isHarvestable, isInSeason, newCrop, type CropData } from "../world/crops.ts";
 import { dayUpdateLocations } from "../world/day.ts";
 import { debrisDrops, debrisKind, spawnDebris, stepDebris, toolBreaks, type ItemDebris } from "../world/debris.ts";
@@ -198,6 +201,8 @@ export class World extends Phaser.Scene {
   private staticSolids: Rect[] = [];
   private dialogueBox: DialogueBox | null = null;
   private shop: ShopMenu | null = null;
+  private gameMenu: GameMenu | null = null;
+  private menuFarmer: FarmerSprite | null = null;
   private water: { grid: WaterGrid; state: WaterState; tint: number; alpha: number; pool: Phaser.GameObjects.Image[] } | null = null;
   private ticks = 0;
   private lightSources: LightSource[] = [];
@@ -321,6 +326,7 @@ export class World extends Phaser.Scene {
     }
     textures.add(SPRITE_TEXT_TEXTURE);
     textures.add(EMOTE_TEXTURE);
+    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles"]) textures.add(t);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
     }
@@ -903,21 +909,31 @@ export class World extends Phaser.Scene {
     this.question = fontData ? new QuestionBox(this, fontData) : null;
     this.dialogueBox = new DialogueBox(this, HUD_DEPTH + 20);
     this.shop = new ShopMenu(this, HUD_DEPTH + 30);
+    this.gameMenu = new GameMenu(this, HUD_DEPTH + 40, fontData, this.cache.json.get(TINY_FONT_DATA) as SpriteFontData | undefined);
+    this.menuFarmer = new FarmerSprite(this, this.appearance, this.params.clothing, this.featureXOffset, this.featureYOffset, true);
 
     const kb = this.input.keyboard!;
     this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,X,E") as Record<string, Phaser.Input.Keyboard.Key>;
     kb.on("keydown-C", () => this.useToolButton());
     kb.on("keydown-X", () => this.interact());
-    kb.on("keydown-E", () => this.interact());
+    kb.on("keydown-E", () => this.toggleGameMenu());
     kb.on("keydown-ENTER", () => (this.dialogueBox?.open ? this.dialogueBox.advance() : this.question?.confirm()));
     kb.on("keydown-SPACE", () => this.question?.confirm());
-    kb.on("keydown-ESC", () => (this.shop?.open ? this.shop.close() : this.question?.cancel()));
+    kb.on("keydown-ESC", () => {
+      if (this.shop?.open) this.shop.close();
+      else if (this.question?.open) this.question.cancel();
+      else this.toggleGameMenu();
+    });
     SLOT_KEYS.forEach((k, i) => kb.on(`keydown-${k}`, () => this.selectSlot(i)));
     this.input.on("wheel", (_p: unknown, _o: unknown, _dx: number, dy: number) => this.shop?.open ? this.shop.scrollBy(dy > 0 ? 1 : -1) : this.selectSlot((this.params.state.currentToolIndex + (dy > 0 ? 1 : -1) + 12) % 12));
     for (const k of ["UP", "W"]) kb.on(`keydown-${k}`, () => this.question?.move(-1));
     for (const k of ["DOWN", "S"]) kb.on(`keydown-${k}`, () => this.question?.move(1));
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (this.gameMenu?.open) {
+        this.gameMenuClick(p.x, p.y);
+        return;
+      }
       if (this.shop?.open) {
         this.shopClick(p.x, p.y);
         return;
@@ -1011,6 +1027,80 @@ export class World extends Phaser.Scene {
     this.faceFarmer(n);
     this.dialogueBox?.show(n.name, pages);
     return true;
+  }
+
+  private toggleGameMenu() {
+    const menu = this.gameMenu;
+    if (!menu) return;
+    if (menu.open) {
+      this.closeGameMenu();
+      return;
+    }
+    if (this.dialogueBox?.open || this.question?.open || this.shop?.open || this.endingDay || this.warping || this.tool) return;
+    menu.open = true;
+  }
+
+  private closeGameMenu() {
+    const menu = this.gameMenu;
+    if (!menu) return;
+    if (menu.held) {
+      const inv = this.params.state.inventory;
+      const slot = menu.heldFrom >= 0 && !inv[menu.heldFrom] ? menu.heldFrom : inv.findIndex((x, i) => !x && i < MAX_ITEMS);
+      if (slot >= 0) inv[slot] = menu.held;
+      menu.held = null;
+    }
+    menu.open = false;
+  }
+
+  private gameMenuClick(px: number, py: number) {
+    const menu = this.gameMenu!;
+    const inv = this.params.state.inventory;
+    const hit = menu.hit(this.cameras.main.width, this.cameras.main.height, px, py);
+    if (!hit) return;
+    if (hit.kind === "close") this.closeGameMenu();
+    else if (hit.kind === "trash") menu.held = null;
+    else if (hit.kind === "slot") {
+      if (hit.slot >= MAX_ITEMS) return;
+      const there = inv[hit.slot] ?? null;
+      if (menu.held && there && there.id === menu.held.id && (there.quality ?? 0) === (menu.held.quality ?? 0) && maximumStack(there) > 1) {
+        const room = maximumStack(there) - there.stack;
+        const moved = Math.min(room, menu.held.stack);
+        there.stack += moved;
+        menu.held.stack -= moved;
+        if (menu.held.stack <= 0) menu.held = null;
+        return;
+      }
+      inv[hit.slot] = menu.held;
+      menu.held = there;
+      if (menu.held) menu.heldFrom = hit.slot;
+    }
+  }
+
+  private drawGameMenu(pointer: { x: number; y: number }) {
+    const menu = this.gameMenu;
+    if (!menu) return;
+    const { state, clothing, strings, clock } = this.params;
+    const w = this.cameras.main.width, h = this.cameras.main.height;
+    const ui = strings["Strings\\UI"] ?? {};
+    const cs = strings["Strings\\StringsFromCSFiles"] ?? {};
+    const season = cs[`Utility.cs.${5680 + Math.max(0, SEASON_ORDER.indexOf(state.season as (typeof SEASON_ORDER)[number]))}`] ?? state.season;
+    const shirt = shirtInfo(this.appearance, clothing), pants = pantsInfo(this.appearance, clothing);
+    const rgb = (c: number[]) => (c[0] << 16) | (c[1] << 8) | c[2];
+    menu.draw(w, h, state.inventory, this.params.items, state.currentToolIndex, MAX_ITEMS, {
+      farmerName: state.farmerName,
+      farmName: state.farmName,
+      money: state.money,
+      totalEarned: state.totalEarned,
+      date: (cs["Utility.cs.5678"] ?? "Day {0} of {1}, Year {2}").replace("{0}", String(state.dayOfMonth)).replace("{1}", season).replace("{2}", String(state.year)),
+      night: clock.time >= 1900,
+      shirt: { index: shirt.spriteIndex, color: rgb(shirt.color) },
+      pants: { index: pants.spriteIndex, color: rgb(pants.color) },
+      strings: { farmName: ui.Inventory_FarmName ?? "{0} Farm", funds: ui.Inventory_CurrentFunds ?? "Current Funds: {0}g", earnings: ui.Inventory_TotalEarnings ?? "Total Earnings: {0}g" },
+    }, pointer);
+    if (menu.open) {
+      const l = gameMenuLayout(w, h);
+      this.menuFarmer?.update({ frame: 0, ms: 0, flip: false, offsetY: 0 } as unknown as Parameters<FarmerSprite["update"]>[0], Facing.Down, l.farmer.x, l.farmer.y, 0, () => HUD_DEPTH + 41);
+    } else this.menuFarmer?.hide();
   }
 
   private isBirthday(name: string) {
@@ -1123,7 +1213,7 @@ export class World extends Phaser.Scene {
       const data = this.params.items.objects[parseId(item.id).id];
       const price = sellPrice(data?.Price ?? 0, item.quality ?? 0);
       if (price <= 0) return;
-      state.money += price * item.stack;
+      earn(state, price * item.stack);
       state.inventory[hit.slot] = null;
     }
   }
@@ -1172,7 +1262,7 @@ export class World extends Phaser.Scene {
   }
 
   private get timePasses() {
-    return !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.endingDay && !this.warping;
+    return !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.endingDay && !this.warping;
   }
 
   private get canMove() {
@@ -1208,7 +1298,7 @@ export class World extends Phaser.Scene {
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       for (const item of state.shipping) {
         const data = this.params.items.objects[parseId(item.id).id];
-        state.money += sellPrice(data?.Price ?? 0, item.quality ?? 0) * item.stack;
+        earn(state, sellPrice(data?.Price ?? 0, item.quality ?? 0) * item.stack);
       }
       state.shipping = [];
       Object.assign(state, nextDay(state));
@@ -1259,11 +1349,12 @@ export class World extends Phaser.Scene {
     this.weatherFx?.draw(flags, this.outdoors, this.cameras.main, time);
     this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: flags.raining }));
     this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
-    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items);
+    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.dialogueBox?.open && !this.question?.open);
     this.dialogueBox?.update(this.game.loop.rawDelta);
     const pointer = this.input.activePointer;
-    this.shop?.draw(this.cameras.main.width, this.cameras.main.height, (id) => this.itemName(id), state.money, state.inventory, this.params.items, { x: pointer.x, y: pointer.y });
+    this.shop?.draw(this.cameras.main.width, this.cameras.main.height, (id) => this.itemName(id), state.money, state.inventory, this.params.items, { x: pointer.x, y: pointer.y }, (item) => parseId(item.id).type === "O" && (this.params.items.objects[parseId(item.id).id]?.Price ?? 0) > 0);
     const speaker = this.dialogueBox?.speaker ? `Portraits/${this.dialogueBox.speaker}` : null;
+    this.drawGameMenu(pointer);
     this.dialogueBox?.draw(this.cameras.main.width, this.cameras.main.height, speaker && this.textures.exists(speaker) ? speaker : null);
     this.hud?.draw(
       {
@@ -1344,9 +1435,9 @@ export class World extends Phaser.Scene {
         `${this.location.name} (${this.mapPath})  tile ${c.x},${c.y}  pos ${this.body.x.toFixed(2)},${this.body.y.toFixed(2)}`,
         `${this.params.state.season} ${this.params.state.dayOfMonth}, año ${this.params.state.year} · ${formatTime(this.params.clock.time)}`,
         this.question?.open ? "Pregunta abierta [Enter = sí, Esc = no]" : "",
-        action ? `Enfrente: ${action}  [X/E]` : "",
+        action ? `Enfrente: ${action}  [X]` : "",
         this.message,
-        "WASD/flechas = mover · Shift = caminar · X/E/clic derecho = interactuar",
+        "WASD/flechas = mover · Shift = caminar · X/clic derecho = interactuar · E/Esc = menú",
       ]
         .filter(Boolean)
         .join("\n"),

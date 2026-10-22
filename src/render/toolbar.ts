@@ -55,9 +55,13 @@ export class ToolbarRenderer {
     return layout.slots.findIndex((s) => x >= s.x && x < s.x + 64 && y >= s.y && y < s.y + 64);
   }
 
-  draw(layout: ReturnType<typeof toolbarLayout>, items: (Item | null)[], current: number, data: ItemData) {
+  draw(layout: ReturnType<typeof toolbarLayout>, items: (Item | null)[], current: number, data: ItemData, visible = true) {
     const b = this.batch;
     b.begin();
+    if (!visible) {
+      b.end();
+      return;
+    }
     b.textureBox(MENU_TEXTURE, [0, 256, 60, 60], layout.box.x, layout.box.y, layout.box.w, layout.box.h);
     layout.slots.forEach((s, i) => {
       const t = menuTile(current === i ? 56 : 10);

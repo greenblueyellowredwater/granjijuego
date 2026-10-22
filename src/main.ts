@@ -159,6 +159,7 @@ async function boot() {
     }),
   );
   const rainyDialogue = (await load("Characters/Dialogue/rainy").catch(() => ({}))) as Record<string, string>;
+  const uiStrings = (await load("Strings/UI").catch(() => ({}))) as Record<string, string>;
   const giftTastes = (await load("Data/NPCGiftTastes").catch(() => ({}))) as Record<string, string>;
   const mapToLocation = new Map<string, string>();
   for (const name of Object.keys(locations)) mapToLocation.set(resolveMapPath(locations, name), name);
@@ -204,7 +205,7 @@ async function boot() {
     giftTastes,
     characters: Object.fromEntries(npcNames.map((n) => [n, characters[n]])),
     shops,
-    strings: { "Strings\\Objects": objectStrings, "Strings\\StringsFromCSFiles": csStrings, "Strings\\Locations": locationStrings },
+    strings: { "Strings\\Objects": objectStrings, "Strings\\StringsFromCSFiles": csStrings, "Strings\\Locations": locationStrings, "Strings\\UI": uiStrings },
     items: {
       tools,
       weapons,

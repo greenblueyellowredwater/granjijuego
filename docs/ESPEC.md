@@ -725,6 +725,59 @@ Aproximaciones:
 - Sin celos de cónyuge ni misiones de entrega.
 - Sin regalo por encima del mostrador: hace falta tener al NPC enfrente.
 
+## Spec S12: menú del juego (`GameMenu`, `InventoryPage`, `InventoryMenu`)
+
+**Apertura**:
+- E o Esc abren el menú si no hay otro menú, diálogo, herramienta en uso, warp ni fin de día. La misma tecla lo cierra.
+- Con cualquier menú activo (diálogo, pregunta, tienda o este menú):
+  - El reloj no avanza.
+  - La barra de herramientas no se dibuja (`Toolbar.draw` retorna si hay `activeClickableMenu`).
+  - El reloj y el HUD sí se dibujan.
+
+**Marco**:
+- Tamaño 800+2·40 por 600+2·40, centrado. Fondo negro a 0,4.
+- `drawDialogueBox` con `drawOnlyBox` usa `Maps/MenuTiles` con el borde desplazado 64 px hacia abajo:
+  - Esquinas en `(x, y+64)`, `(x+w−64, y+64)` y las inferiores en `y+h−64`, con fuentes (0,0), (192,0), (192,192) y (0,192).
+  - Bordes: arriba (128,0), abajo (128,192), izquierda (0,128) y derecha (192,128). Los laterales empiezan en `y+128` y miden `h−192`.
+  - Relleno (64,128) en `(x+28, y+92, w−64, h−128)`.
+- Pestañas en `x+64·(i+1), y+16`, 16×16 a escala 4. La activa baja 8 px.
+  - Iconos de `Cursors` en (k·16, 368): inventario 0, habilidades 1, social 2, mapa 3, artesanía 4, colecciones 5, opciones 6, salir 7.
+  - Iconos de `Cursors_1_6`: animales (257,246) y poderes (216,494).
+- Botón de cierre `(337,494,12,12)` en `(x+w−36, y−8)`.
+
+**InventoryMenu**:
+- Casilla `i` en `(x + (i mod 12)·64, y + fila·64 + (fila−1)·4 − 12)`. El `−12` solo aplica en la fila 0 de un inventario de jugador.
+- Fondo de casilla: tile 10 de MenuTiles. Casillas a partir de `maxItems` (12 al inicio): tile 57 a 0,5.
+- En el inventario del jugador, la fila 0 lleva etiquetas `1..9 0 - =` en tinyFont, centradas encima. Van en rojo si es la herramienta actual y en gris oscuro si no.
+- Los ítems usan `drawInMenu` con transparencia 1, o 0,25 si no pasan el filtro (en la tienda, los no vendibles).
+
+**InventoryPage** (`top = y+40+96`):
+- Inventario en `(x+56, top)` y partición horizontal (tiles 4, 6 estirado y 7) en `top+192`.
+- Equipo, en columnas `x+48` (anillo izq., anillo der., botas) y `x+256` (sombrero, camisa, pantalón), filas `top+248/312/376`.
+  - Vacíos: tiles 41, 41, 40, 42, 69 y 68. Con ítem: tile 10.
+  - Camisa: rect 8×8 en `(idx·8 mod 128, ⌊idx·8/128⌋·32)` más la capa de tinte desplazada +128, con origen centrado ×4.
+  - Pantalón: `(192·(idx mod 10), 688·⌊idx/10⌋+672, 16, 16)` teñido.
+- Retrato:
+  - Fondo `daybg` (o `nightbg` desde las 19:00) en `(x+120, top+248)`.
+  - Granjero de frente, cuadro 0, en `(x+152, top+280)`.
+  - Nombre centrado en `x+184`, `top+456`.
+- Textos con sombra en `dialogueFont`, centrados en `x+576`: nombre de granja (`top+260`), fondos (`top+324`), ganancias totales (`top+384`) y fecha `Utility.cs.5678` (`top+448`, a 0,8).
+  - Sombra: color (221,148,84) en (−3,+3) y (0,+3).
+  - Las ganancias totales suman solo cuando el dinero aumenta (`Farmer.set_Money`).
+- Tacho `(564,102,18,26)` en `(x + w/3 + 608, top+256)`, con tapa `(564,129,18,10)` y origen (16,10). Botón de ordenar `(162,440,16,16)` en `(x+w, y+h/3−56)`.
+- Clic en una casilla:
+  - Levanta el ítem, o lo intercambia con el que está en la mano.
+  - Si son iguales y apilables, completa la pila.
+  - Clic en el tacho: descarta lo que está en la mano.
+  - Al cerrar, lo que quede en la mano vuelve a su casilla, o a la primera libre.
+
+**Tienda**: su inventario usa el mismo `InventoryMenu`, sin `playerInventory` y con `showGrayedOutSlots`.
+
+Aproximaciones:
+- Solo funciona la pestaña de inventario.
+- Sin mini-retrato en la pestaña de habilidades, sin tooltips y sin botón de ordenar funcional.
+- Sin la capa azul nocturna sobre el granjero, sin animación de la tapa del tacho y sin tirar ítems fuera del menú.
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:

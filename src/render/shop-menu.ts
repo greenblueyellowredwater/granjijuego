@@ -1,5 +1,6 @@
 import { UiBatch } from "./ui-batch.ts";
-import { drawItemInMenu, MENU_TEXTURE } from "./toolbar.ts";
+import { drawItemInMenu } from "./toolbar.ts";
+import { drawInventoryGrid, inventorySlotAt } from "./menu-parts.ts";
 import { layoutSpriteText, SPRITE_TEXT_TEXTURE, SPRITE_TEXT_ZOOM, widthOfString } from "./spritetext.ts";
 import { moneyDigits } from "./hud-layout.ts";
 import type { Item, ItemData } from "../world/items.ts";
@@ -52,10 +53,8 @@ export class ShopMenu {
     if (inside({ x: l.down.x, y: l.down.y, w: 44, h: 48 })) return { kind: "down" as const };
     const row = l.rows.findIndex(inside);
     if (row >= 0 && this.scroll + row < this.stock.length) return { kind: "buy" as const, index: this.scroll + row };
-    if (inside(l.inv)) {
-      const col = Math.floor((px - l.inv.x) / 64), r = Math.floor((py - l.inv.y) / 68);
-      return { kind: "sell" as const, slot: r * 12 + col };
-    }
+    const slot = inventorySlotAt(px, py, l.inv.x, l.inv.y, false);
+    if (slot >= 0) return { kind: "sell" as const, slot };
     return null;
   }
 
@@ -63,7 +62,7 @@ export class ShopMenu {
     this.scroll = Math.max(0, Math.min(Math.max(0, this.stock.length - 4), this.scroll + delta));
   }
 
-  draw(uiWidth: number, uiHeight: number, names: (id: string) => string, money: number, inventory: (Item | null)[], data: ItemData, hover: { x: number; y: number }) {
+  draw(uiWidth: number, uiHeight: number, names: (id: string) => string, money: number, inventory: (Item | null)[], data: ItemData, hover: { x: number; y: number }, sellable: (item: Item) => boolean = () => true) {
     const b = this.batch;
     b.begin();
     if (this.open) {
@@ -91,12 +90,7 @@ export class ShopMenu {
       b.draw({ texture: CURSORS, sx: 421, sy: 459, sw: 11, sh: 12, x: l.up.x, y: l.up.y, scaleX: 4 });
       b.draw({ texture: CURSORS, sx: 421, sy: 472, sw: 11, sh: 12, x: l.down.x, y: l.down.y, scaleX: 4 });
       b.draw({ texture: CURSORS, sx: 337, sy: 494, sw: 12, sh: 12, x: l.close.x, y: l.close.y, scaleX: 4 });
-      for (let i = 0; i < 36; i++) {
-        const sx = l.inv.x + (i % 12) * 64, sy = l.inv.y + Math.floor(i / 12) * 68;
-        b.draw({ texture: MENU_TEXTURE, sx: 128, sy: 128, sw: 64, sh: 64, x: sx, y: sy, alpha: i < inventory.length ? 1 : 0.5 });
-        const item = inventory[i];
-        if (item) drawItemInMenu(b, item, sx, sy, 1, 1, data);
-      }
+      drawInventoryGrid(b, l.inv.x, l.inv.y, inventory, data, { playerInventory: false, showGrayedOutSlots: true, maxItems: 12, currentToolIndex: -1, tinyFont: null, highlight: sellable });
     }
     b.end();
   }
