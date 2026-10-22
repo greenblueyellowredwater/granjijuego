@@ -260,6 +260,26 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
+    "habla con Clint en el mostrador y abre su tienda",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=Blacksmith&x=3&y=15&time=1000`);
+      await page.evaluate(`localStorage.clear()`);
+      await page.goto(`${BASE}/?map=Blacksmith&x=3&y=15&time=1000`);
+      await waitStatus(page, /Blacksmith .* tile 3,15/);
+      await new Promise((r) => setTimeout(r, 800));
+      await world(`(w.params.npcs.npcs.forEach(function (n) { if (n.name === "Clint") { n.location = "Blacksmith"; n.x = 3 * 64; n.y = 13 * 64; n.schedule = []; } }), w.body.facing = 0, 1)`);
+      await page.keyboard.press("x");
+      await new Promise((r) => setTimeout(r, 400));
+      if (!(await world(`w.question.open`))) throw new Error("Clint no ofreció el menú");
+      await page.keyboard.press("Enter");
+      await new Promise((r) => setTimeout(r, 400));
+      const stock = (await world(`JSON.stringify(w.shop.open && w.shop.stock.map(function (e) { return e.id + "$" + e.price; }))`)) as string;
+      if (stock !== '["(O)378$75","(O)380$150","(O)382$150","(O)384$400"]') throw new Error(`Stock de Clint: ${stock}`);
+      await page.screenshot({ path: `${OUT}/clint-shop.png` });
+    },
+  ],
+  [
     "abre el regalo, siembra, riega y cosecha una chirivía a los 4 días",
     async (page) => {
       const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);

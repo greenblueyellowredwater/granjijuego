@@ -1577,13 +1577,75 @@ export class World extends Phaser.Scene {
 
   private tryAction(action: string) {
     const words = action.trim().split(/\s+/);
-    if (words[0] === "Buy" && this.location.name === "SeedShop") {
-      const pierre = this.params.npcs.in("SeedShop").find((n) => n.name === "Pierre");
-      if (!pierre || Math.round(pierre.x / 64) !== 4 || Math.round(pierre.y / 64) !== 17) {
-        this.message = this.localized(this.params.strings["Strings\\StringsFromCSFiles"]?.["GameLocation.cs.8525"]);
+    const t = facingTile(this.body);
+    const me = centerTile(this.body);
+    const loc = this.params.strings["Strings\\Locations"] ?? {};
+    const ownerAt = (name: string, tiles: { x: number; y: number }[]) =>
+      this.params.npcs.in(this.location.name).find((n) => n.name === name && tiles.some((p) => Math.round(n.x / 64) === p.x && Math.round(n.y / 64) === p.y));
+    const menu = (question: string, options: [string, string][], handle: (key: string) => void) => {
+      if (!this.question) return true;
+      void this.question.ask(question, options.map((o) => o[1])).then((i) => handle(options[i]?.[0] ?? "Leave"));
+      return true;
+    };
+    switch (words[0]) {
+      case "Buy":
+        if (words[1] === "Fish") return this.tryOpenShopArea("FishShop", undefined, me.y - 1) || true;
+        if (this.location.name === "SeedShop") {
+          if (!this.tryOpenShopArea("SeedShop", { x: 4, y: 17, w: 1, h: 1 }, me.y - 1)) this.message = this.localized(this.params.strings["Strings\\StringsFromCSFiles"]?.["GameLocation.cs.8525"]);
+          return true;
+        }
+        return false;
+      case "Saloon":
+        return this.tryOpenShopArea("Saloon", { x: 9, y: 17, w: 10, h: 2 });
+      case "HospitalShop":
+        this.tryOpenShopArea("Hospital", { x: me.x - 1, y: me.y - 2, w: 2, h: 1 });
         return true;
+      case "Blacksmith": {
+        const clint = ownerAt("Clint", [{ x: t.x, y: t.y - 1 }, { x: t.x - 1, y: t.y - 1 }]);
+        if (!clint) return false;
+        clint.facing = 2;
+        return menu("", [["Shop", loc.Blacksmith_Clint_Shop ?? "Shop"], ["Upgrade", loc.Blacksmith_Clint_Upgrade ?? "Upgrade Tools"], ["Leave", loc.Blacksmith_Clint_Leave ?? "Leave"]], (k) => {
+          if (k === "Shop") this.openShop("Blacksmith");
+          else if (k === "Upgrade") this.message = "Mejora de herramientas todavía no implementada";
+        });
       }
-      return this.openShop("SeedShop");
+      case "AnimalShop": {
+        const marnie = ownerAt("Marnie", [{ x: t.x, y: t.y - 1 }, { x: t.x - 1, y: t.y - 1 }]);
+        if (!marnie) return false;
+        marnie.facing = 2;
+        return menu("", [["Supplies", loc.AnimalShop_Marnie_Supplies ?? "Supplies Shop"], ["Purchase", loc.AnimalShop_Marnie_Animals ?? "Purchase Animals"], ["Leave", loc.AnimalShop_Marnie_Leave ?? "Leave"]], (k) => {
+          if (k === "Supplies") this.openShop("AnimalShop");
+          else if (k === "Purchase") this.message = "Compra de animales todavía no implementada";
+        });
+      }
+      case "Carpenter": {
+        const robin = this.params.npcs.in(this.location.name).find((n) => n.name === "Robin" && Math.hypot(n.x / 64 - t.x, n.y / 64 - t.y) <= 3);
+        if (!robin) return false;
+        robin.facing = 2;
+        return menu(loc.ScienceHouse_CarpenterMenu ?? "", [["Shop", loc.ScienceHouse_CarpenterMenu_Shop ?? "Shop"], ["Upgrade", loc.ScienceHouse_CarpenterMenu_UpgradeHouse ?? "Upgrade House"], ["Construct", loc.ScienceHouse_CarpenterMenu_Construct ?? "Construct Farm Buildings"], ["Leave", loc.ScienceHouse_CarpenterMenu_Leave ?? "Leave"]], (k) => {
+          if (k === "Shop") this.openShop("Carpenter");
+          else if (k !== "Leave") this.message = "Construcción y mejoras todavía no implementadas";
+        });
+      }
+      default:
+        return false;
+    }
+  }
+
+  private tryOpenShopArea(shopId: string, area?: { x: number; y: number; w: number; h: number }, maxY?: number) {
+    const shop = this.params.shops[shopId];
+    if (!shop) return false;
+    const gsq = this.gsqState();
+    for (const o of shop.Owners ?? []) {
+      if (o.Condition && !checkConditions(o.Condition, { state: gsq, random: daySaveRandom(gsq) })) continue;
+      if (o.Name === "AnyOrNone" || o.Name === "None") return this.openShop(shopId);
+      const npc = this.params.npcs.in(this.location.name).find((n) => {
+        if (o.Name !== "Any" && n.name !== o.Name) return false;
+        const x = Math.round(n.x / 64), y = Math.round(n.y / 64);
+        if (area && !(x >= area.x && x < area.x + area.w && y >= area.y && y < area.y + area.h)) return false;
+        return maxY === undefined || y <= maxY;
+      });
+      if (npc) return this.openShop(shopId);
     }
     return false;
   }
@@ -1592,7 +1654,7 @@ export class World extends Phaser.Scene {
     const data = this.params.shops[id];
     if (!data || !this.shop) return false;
     const gsq = this.gsqState();
-    const stock = shopStock(data, (q, raw) => objectBasePrice(this.params.items.objects, q, raw, gsq.year), { state: gsq, random: daySaveRandom(gsq) });
+    const stock = shopStock(data, (q, raw) => objectBasePrice(this.params.items.objects, q, raw, gsq.year), { state: gsq, random: daySaveRandom(gsq) }).filter((e) => itemSprite({ id: e.id, stack: 1 }, this.params.items) !== null);
     this.shop.show(stock);
     return true;
   }
@@ -1845,7 +1907,7 @@ export class World extends Phaser.Scene {
     this.dialogueBox?.update(this.game.loop.rawDelta);
     this.shipping?.update(Math.min(250, this.game.loop.rawDelta));
     const pointer = this.input.activePointer;
-    this.shop?.draw(this.cameras.main.width, this.cameras.main.height, (id) => this.itemName(id), state.money, state.inventory, this.params.items, { x: pointer.x, y: pointer.y }, (item) => parseId(item.id).type === "O" && (this.params.items.objects[parseId(item.id).id]?.Price ?? 0) > 0);
+    this.shop?.draw(this.cameras.main.width, this.cameras.main.height, (id) => this.itemDisplayName(id), state.money, state.inventory, this.params.items, { x: pointer.x, y: pointer.y }, (item) => parseId(item.id).type === "O" && (this.params.items.objects[parseId(item.id).id]?.Price ?? 0) > 0);
     const speaker = this.dialogueBox?.speaker ? `Portraits/${this.dialogueBox.speaker}` : null;
     this.drawGameMenu(pointer);
     this.drawChest(pointer);

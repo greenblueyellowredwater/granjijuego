@@ -26,10 +26,11 @@ export function drawItemInMenu(batch: UiBatch, item: Item, x: number, y: number,
   const sprite = itemSprite(item, data);
   if (!sprite) return;
   const { type } = parseId(item.id);
-  if (type === "O") batch.draw({ texture: SHADOW, sx: 0, sy: 0, sw: 12, sh: 7, x: x + 32, y: y + 48, originX: 6 / 12, originY: 3 / 7, scaleX: 3, alpha: 0.5 * transparency });
+  if (type === "O" && item.id !== "(O)590" && item.id !== "(O)SeedSpot") batch.draw({ texture: SHADOW, sx: 0, sy: 0, sw: 12, sh: 7, x: x + 32, y: y + 48, originX: 6 / 12, originY: 3 / 7, scaleX: 3, alpha: 0.5 * transparency });
   const overlay = item.color && type === "O" && (data.objects[parseId(item.id).id] as { ColorOverlayFromNextIndex?: boolean } | undefined)?.ColorOverlayFromNextIndex;
   const tint = item.color ? (item.color[0] << 16) | (item.color[1] << 8) | item.color[2] : 0xffffff;
-  batch.draw({ ...sprite, x: x + 32, y: y + 32, originX: 0.5, originY: 0.5, scaleX: 4 * scaleSize, alpha: transparency, tint: item.color && !overlay ? tint : 0xffffff });
+  const drawScale = type === "BC" && scaleSize > 0.2 ? scaleSize / 2 : scaleSize;
+  batch.draw({ ...sprite, x: x + 32, y: y + 32, originX: 0.5, originY: 0.5, scaleX: 4 * drawScale, alpha: transparency, tint: item.color && !overlay ? tint : 0xffffff });
   if (overlay) {
     const width = data.textureWidths[sprite.texture] ?? 384;
     const next = { ...sprite, sx: (sprite.sx + 16) % width, sy: sprite.sy + (sprite.sx + 16 >= width ? 16 : 0) };

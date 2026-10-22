@@ -1121,6 +1121,29 @@ Aproximaciones:
 - Sin máquinas que no usan `ItemPlacedInMachine` (colmenas, paneles, etc.) ni `OutputMethod`.
 - Sin `ReadyTimeModifiers`.
 
+## Spec S22: otras tiendas (`TryOpenShopMenu` y acciones de mapa)
+
+**Dueño**: `TryOpenShopMenu(id, ubicación, área?, yMáx?)` abre la tienda si alguno de los `Owners` vigentes (con `Condition` GSQ) es un NPC de la ubicación dentro del área y con `y ≤ yMáx`. `AnyOrNone` y `None` abren siempre; `Any` acepta a cualquier NPC.
+
+**Acciones** (propiedad `Action` en la capa Buildings):
+
+| Acción | Comportamiento |
+| --- | --- |
+| `Buy General` | SeedShop, área (4,17,1,1), `yMáx = y_jugador − 1`. Si no hay dueño, mensaje `GameLocation.cs.8525`. |
+| `Buy Fish` | FishShop, `yMáx = y_jugador − 1`. |
+| `Saloon` | Saloon, área (9,17,10,2). |
+| `HospitalShop` | Hospital, área `(x−1, y−2, 2, 1)` del jugador. |
+| `Blacksmith` | Clint en `(x, y−1)` o `(x−1, y−1)` de la casilla de acción. Pregunta Shop / Upgrade Tools / Leave (`Strings\Locations:Blacksmith_Clint_*`); Shop abre `Blacksmith`. |
+| `AnimalShop` | Marnie en las mismas casillas. Pregunta Supplies / Purchase Animals / Leave; Supplies abre `AnimalShop`. |
+| `Carpenter` | Robin a ≤ 3 casillas. Pregunta `ScienceHouse_CarpenterMenu` con Shop / Upgrade House / Construct / Leave; Shop abre `Carpenter`. |
+
+**Ítems**:
+- Los grandes fabricables se dibujan en menús a la mitad de escala si `scaleSize > 0,2`, sin sombra (`Object.drawInMenu`).
+- No llevan sombra `(O)590` ni `(O)SeedSpot`.
+- El stock omite ítems que todavía no se pueden dibujar: muebles `(F)` y consultas como `RANDOM_ITEMS` o `DISH_OF_THE_DAY`.
+
+Aproximaciones: sin mejora de herramientas, compra de animales, construcción, mejora de casa, geodas ni diálogo del dueño en la tienda.
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:
