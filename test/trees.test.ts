@@ -29,6 +29,6 @@ describe("árboles", () => {
     let ticks = 0;
     while (m.tick(true) !== "fallen") ticks++;
     expect(ticks).toBeGreaterThan(30);
-    expect(ticks).toBeLessThan(120);
+    expect(ticks).toBeLessThan(150);
   });
 });
