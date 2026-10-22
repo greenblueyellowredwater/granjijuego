@@ -405,6 +405,36 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       await waitStatus(page, /^Mine .* tile 23,8/m);
     },
   ],
+  [
+    "recibe la espada oxidada, mata un slime y un slime le hace daño",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=Mine&x=23&y=10`);
+      await waitStatus(page, /Mine .* tile 23,10/);
+      const slot = (await world(`w.params.state.inventory.findIndex((i) => i && i.id === "(W)0")`)) as number;
+      if (slot < 0) throw new Error("No recibió la espada oxidada");
+      await world(`w.warpTo("UndergroundMine2", -1, -1)`);
+      await waitStatus(page, /UndergroundMine2 /);
+      await settle();
+      await world(`(() => { w.monsters = []; const s = w.mine.start; w.body.facing = 2; const m = w.createMonster({ name: "Green Slime", x: s.x, y: s.y + 1 }, 2); m.walkingToward = false; m.jitter = 0; m.speed = 0; m.health = 3; w.monsters.push(m); return true; })()`);
+      await page.keyboard.press(String(slot + 1));
+      for (let i = 0; i < 10 && ((await world(`w.monsters.length`)) as number) > 0; i++) {
+        await page.keyboard.press("c");
+        await new Promise((r) => setTimeout(r, 400));
+      }
+      if (((await world(`w.monsters.length`)) as number) > 0) throw new Error("El slime sigue vivo");
+      const xp = (await world(`w.params.state.experience[4]`)) as number;
+      if (xp <= 0) throw new Error(`Sin experiencia de combate: ${xp}`);
+      await world(`(() => { const s = w.mine.start; const m = w.createMonster({ name: "Green Slime", x: s.x, y: s.y + 1 }, 2); w.monsters.push(m); m.vy = 10; return true; })()`);
+      let hp = 100;
+      for (let i = 0; i < 40 && hp >= 100; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        hp = (await world(`w.params.state.health`)) as number;
+      }
+      if (hp >= 100) throw new Error(`El slime no hizo daño: ${hp}`);
+      await page.screenshot({ path: `${OUT}/combat.png` });
+    },
+  ],
 ];
 
 if (!CHROME) throw new Error("No encontré Chrome; definí CHROME_PATH");

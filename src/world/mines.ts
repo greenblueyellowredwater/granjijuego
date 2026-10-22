@@ -215,7 +215,65 @@ type Clump = Extract<Entity, { kind: "clump" }>;
 
 export const isMineStone = (name: string | undefined, category: number | undefined) => category === -999 && name === "Stone";
 
+export interface MonsterSpawn {
+  name: string;
+  x: number;
+  y: number;
+  facing?: number;
+  special?: boolean;
+}
+
+export function monsterForLevel(level: number, dark: boolean, diggable: boolean, distance: number, r: MineRandom, ghostAdded: { value: boolean }): Omit<MonsterSpawn, "x" | "y"> {
+  const area = getMineArea(level);
+  if (area === 0 || area === 10) {
+    if (r.nextDouble() < 0.25) return { name: "Bug", facing: r.next(4) };
+    if (level < 15) {
+      if (diggable) return { name: "Duggy" };
+      if (r.nextDouble() < 0.15) return { name: "Rock Crab" };
+      return { name: "Green Slime" };
+    }
+    if (level <= 30) {
+      if (diggable) return { name: "Duggy" };
+      if (r.nextDouble() < 0.15) return { name: "Rock Crab" };
+      if (r.nextDouble() < 0.05 && distance > 10) return { name: "Fly" };
+      if (r.nextDouble() < 0.45) return { name: "Green Slime" };
+      return { name: "Grub" };
+    }
+    if (level <= 40) {
+      if (r.nextDouble() < 0.1 && distance > 10) return { name: "Bat" };
+      return { name: "Stone Golem" };
+    }
+  }
+  if (area === 40) {
+    if (level >= 70 && r.nextDouble() < 0.75) {
+      r.nextDouble();
+      return { name: "Skeleton" };
+    }
+    if (r.nextDouble() < 0.3) {
+      r.nextDouble();
+      return { name: "Dust Spirit" };
+    }
+    if (r.nextDouble() < 0.3 && distance > 10) return { name: "Frost Bat" };
+    if (!ghostAdded.value && level > 50 && r.nextDouble() < 0.3 && distance > 10) {
+      ghostAdded.value = true;
+      return { name: "Ghost" };
+    }
+    return { name: "Green Slime" };
+  }
+  if (area === 80) {
+    if (isDarkArea(level, dark) && r.nextDouble() < 0.25) return { name: "Lava Bat" };
+    if (r.nextDouble() < 0.15) return { name: "Green Slime" };
+    if (r.nextDouble() < 0.15) return { name: "Metal Head" };
+    if (r.nextDouble() < 0.25) return { name: "Shadow Brute" };
+    if (r.nextDouble() < 0.25) return { name: "Shadow Shaman" };
+    if (r.nextDouble() < 0.25) return { name: "Lava Crab" };
+    if (r.nextDouble() < 0.2 && distance > 8 && level >= 90) return { name: "Squid Kid" };
+  }
+  return { name: "Green Slime" };
+}
+
 export interface PopulatedLevel {
+  monsters: MonsterSpawn[];
   entities: Entity[];
   ladder: { x: number; y: number } | null;
   stonesLeft: number;
@@ -244,13 +302,25 @@ export function populateLevel(
   const add = (o: MineObject) => objects.set(key(o.x, o.y), o);
   let stonesLeft = 0;
   let ladder: { x: number; y: number } | null = null;
+  const monsters: MonsterSpawn[] = [];
+  const ghostAdded = { value: false };
+  const spawnMonster = (x: number, y: number, specialChance: number) => {
+    const m = monsterForLevel(level, dark, map.diggable(x, y), distance(x, y), r, ghostAdded);
+    const spawn: MonsterSpawn = { ...m, x, y };
+    if (r.nextDouble() < specialChance) spawn.special = true;
+    monsters.push(spawn);
+    return spawn;
+  };
 
   const chances = levelChances(level, r);
   const darkArea = isDarkArea(level, dark);
   if (level % 10 !== 0) {
     for (let x = 0; x < map.width; x++) {
       for (let y = 0; y < map.height; y++) {
-        if (!clear(x, y)) continue;
+        if (!clear(x, y)) {
+          if (r.nextDouble() <= chances.monster && !map.hasTile("Buildings", x, y) && !occupied(x, y) && solidGround(x, y) && distance(x, y) > 5) spawnMonster(x, y, 0.01);
+          continue;
+        }
         if (r.nextDouble() <= chances.stone) {
           if (area === 40 && r.nextDouble() < 0.15) {
             add({ kind: "object", x, y, itemId: String(r.next(319, 322)) });
@@ -262,7 +332,14 @@ export function populateLevel(
           if (isStone(litter.id)) stonesLeft++;
           continue;
         }
-        if (r.nextDouble() <= chances.monster && distance(x, y) > 5) continue;
+        if (r.nextDouble() <= chances.monster && distance(x, y) > 5) {
+          const spawn = spawnMonster(x, y, 0.00175);
+          const group = spawn.name === "Grub" ? 0.4 : spawn.name === "Dust Spirit" ? 0.6 : 0;
+          if (group > 0) {
+            for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) if (r.nextDouble() < group && clear(x + dx, y + dy)) monsters.push({ name: spawn.name, x: x + dx, y: y + dy });
+          }
+          continue;
+        }
         if (r.nextDouble() <= chances.item) {
           add({ kind: "object", x, y, itemId: randomMineItem(level, r), spawned: true });
           continue;
@@ -282,7 +359,7 @@ export function populateLevel(
         const pick = all[r.next(all.length)];
         if (!pick || !isStone(pick.itemId)) continue;
         const radius = r.next(3, 8);
-        r.nextDouble();
+        const spawnHere = r.nextDouble() < 0.1;
         const half = Math.trunc(radius / 2);
         for (let cx = pick.x - half; cx < pick.x + half; cx++) {
           for (let cy = pick.y - half; cy < pick.y + half; cy++) {
@@ -290,6 +367,7 @@ export function populateLevel(
             if (!o || !isStone(o.itemId)) continue;
             objects.delete(key(cx, cy));
             stonesLeft--;
+            if (distance(cx, cy) > 5 && spawnHere && r.nextDouble() < 0.12) spawnMonster(cx, cy, 0);
           }
         }
       }
@@ -339,7 +417,7 @@ export function populateLevel(
       } while (i < 1 || r.nextDouble() < 0.25 + ctx.dailyLuck);
     }
   }
-  return { entities: [...objects.values(), ...clumps], ladder, stonesLeft, start };
+  return { monsters, entities: [...objects.values(), ...clumps], ladder, stonesLeft, start };
 }
 
 export function ladderChance(stonesLeft: number, ctx: MinerContext, enemies: number) {

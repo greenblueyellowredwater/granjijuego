@@ -1,7 +1,8 @@
 import Phaser from "phaser";
 import { SpriteFont } from "./spritefont.ts";
 import { clockHandRotation, formatTime } from "../world/clock.ts";
-import { dateText, energyBarLayout, moneyDigits } from "./hud-layout.ts";
+import { dateText, energyBarLayout, moneyDigits, redToGreen } from "./hud-layout.ts";
+import { healthBarLayout } from "../world/monsters.ts";
 
 export const HUD_DEPTH = 100;
 const CURSORS = "LooseSprites/Cursors";
@@ -28,6 +29,9 @@ export interface HudState {
   money: number;
   stamina: number;
   maxStamina: number;
+  health?: number;
+  maxHealth?: number;
+  showHealth?: boolean;
   shaking: boolean;
   timePasses: boolean;
   totalMs: number;
@@ -101,9 +105,26 @@ export class Hud {
     dark.setPosition(l.fill.x, l.fill.y).setScale(l.fill.w, Math.min(4, l.fill.h)).setTint((Math.max(0, r - 50) << 16) | (Math.max(0, g - 50) << 8) | b);
   }
 
+  private health(s: HudState, uiWidth: number, uiHeight: number) {
+    const health = s.health ?? 100, max = s.maxHealth ?? 100;
+    const l = healthBarLayout(health, max, uiWidth, uiHeight, s.maxStamina);
+    const pulse = health < 20 ? Math.sin(s.totalMs / (health * 50)) / 4 + 0.9 : 1;
+    const tint = health < 20 ? (Math.min(255, Math.trunc(255 * pulse)) << 16) | (Math.min(255, Math.trunc(192 * pulse)) << 8) | Math.min(255, Math.trunc(203 * pulse)) : 0xffffff;
+    this.sprite(CURSORS, [268, 408, 12, 16], l.top.x, l.top.y)?.setTint(tint);
+    this.sprite(CURSORS, [268, 424, 12, 16], l.middle.x, l.middle.y)?.setScale(l.middle.w / 12, l.middle.h / 16).setTint(tint);
+    this.sprite(CURSORS, [268, 448, 12, 16], l.bottom.x, l.bottom.y)?.setTint(tint);
+    if (l.fill.h <= 0) return;
+    const [r, g, b] = redToGreen(health / max);
+    const fill = this.image("__WHITE", 0, 0, 1, 1);
+    fill.setPosition(l.fill.x, l.fill.y).setScale(l.fill.w, l.fill.h).setTint((r << 16) | (g << 8) | b);
+    const dark = this.image("__WHITE", 0, 0, 1, 1);
+    dark.setPosition(l.fill.x, l.fill.y).setScale(l.fill.w, Math.min(4, l.fill.h)).setTint((Math.max(0, r - 50) << 16) | (Math.max(0, g - 50) << 8) | b);
+  }
+
   draw(s: HudState, uiWidth: number, uiHeight = 0) {
     this.used = 0;
     if (uiHeight > 0) this.energy(s, uiWidth, uiHeight);
+    if (uiHeight > 0 && s.showHealth) this.health(s, uiWidth, uiHeight);
     const px = uiWidth - 300, py = 8;
     this.sprite(CURSORS, [333, 431, 71, 43], px, py);
 

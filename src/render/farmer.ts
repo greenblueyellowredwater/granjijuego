@@ -85,6 +85,10 @@ export class FarmerSprite {
     return name;
   }
 
+  setVisible(visible: boolean) {
+    for (const img of this.images) img.setVisible(visible && img.visible);
+  }
+
   update(f: AnimFrame & { arm?: number }, facing: Facing, x: number, y: number, layerDepth: number, toDepth: (layerDepth: number) => number) {
     const feature = { x: this.featureX[f.frame] ?? 0, y: this.featureY[f.frame] ?? 0 };
     const layers = farmerLayers(this.appearance, f.frame, f.flip, facing, feature, this.shirt, this.pants, 128, f.arm ?? 6);

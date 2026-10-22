@@ -1,7 +1,7 @@
 import { Facing, farmerBox, TICK_MS } from "./movement.ts";
 import type { AnimFrame } from "./farmer-animation.ts";
 
-export type FrameBehavior = "swipe" | "useTool" | "canMove";
+export type FrameBehavior = "swipe" | "useTool" | "canMove" | "swordSwipe";
 
 export interface SingleFrame extends AnimFrame {
   arm: number;
@@ -31,6 +31,13 @@ export function swingAnimation(facing: Facing, power = 0, speed = 1): SingleFram
       ];
     }
   }
+}
+
+export function weaponAnimation(facing: Facing, frames: number[], times: number[], flip: boolean, arm: number): SingleFrame[] {
+  const out = frames.map((frame, i) => f(frame, times[i], { flip, arm, start: "swordSwipe" }));
+  out.push(f(frames[frames.length - 1], 0, { flip, arm, end: "canMove" }));
+  void facing;
+  return out;
 }
 
 export function wateringAnimation(facing: Facing): SingleFrame[] {
@@ -84,7 +91,7 @@ export class SingleAnimation {
   }
 }
 
-export type ToolKind = "hoe" | "axe" | "pickaxe" | "wateringCan" | "scythe" | "fishingRod" | "other";
+export type ToolKind = "hoe" | "axe" | "pickaxe" | "wateringCan" | "scythe" | "weapon" | "fishingRod" | "other";
 
 export function toolKind(className: string | undefined): ToolKind {
   switch (className) {
@@ -128,7 +135,7 @@ export interface ToolDraw {
 const D15 = 0.2617994, D45 = 0.7853982, D105 = 1.832596, D7_5 = 0.1308997, POWER_TILT = 0.04908739;
 
 export function toolDrawTransform(kind: ToolKind, facing: Facing, idx: number, power = 0): ToolDraw | null {
-  if (kind === "scythe" || kind === "other") return null;
+  if (kind === "scythe" || kind === "weapon" || kind === "other") return null;
   const p = Math.min(8, power * 4);
   if (kind === "wateringCan") {
     const l6 = 80;

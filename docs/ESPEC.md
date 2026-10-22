@@ -1376,6 +1376,125 @@ Aproximaciones:
 - Las luces se dibujan sin tinte.
 - Falta el sprite de piedra agrietada al romper.
 
+## Spec S25: combate (`Monster`, `GreenSlime`, `Bug`, `MeleeWeapon`, `Farmer.takeDamage`)
+
+**Monstruos en las minas** (`getMonsterForThisLevel`, sin dificultad extra):
+- Áreas 0 y 10:
+  - 25%: `Bug` con dirección `Next(4)`.
+  - Nivel < 15: `Duggy` en tierra excavable; si no, 15% `Rock Crab`; si no, `Green Slime`.
+  - Niveles 15–30: `Duggy` en tierra excavable. Si no, en orden:
+    - 15% `Rock Crab`;
+    - 5% `Fly` (a más de 10 tiles);
+    - 45% `Green Slime`;
+    - si no, `Grub`.
+  - Niveles 31–40: 10% `Bat` (a más de 10 tiles); si no, `Stone Golem`.
+- Área 40:
+  - Desde el nivel 70, 75%: `Skeleton`.
+  - Si no, 30%: `Dust Spirit`.
+  - Si no, 30% (a más de 10 tiles): murciélago helado.
+  - Desde el 51: un `Ghost` por nivel, con 30%, a más de 10 tiles.
+  - Si no, `Green Slime`.
+- Área 80, en orden:
+  - 25% murciélago si es oscura;
+  - 15% `Green Slime`;
+  - 15% `Metal Head`;
+  - 25% `Shadow Brute`;
+  - 25% `Shadow Shaman`;
+  - 25% `Lava Crab`;
+  - 20% `Squid Kid` (a más de 8 tiles, desde el nivel 90);
+  - si no, `Green Slime`.
+- Puntos de aparición en `populateLevel`:
+  - Tiles libres con `r ≤ monstruo` y distancia > 5. 0,175% de ítem especial. Grub y Dust Spirit suman vecinos con 40% y 60%.
+  - Tiles no libres con suelo sólido: misma probabilidad y distancia; 1% de ítem especial.
+  - Claros de piedras: 10% del claro y 12% por piedra.
+- Implementados: `Green Slime` y `Bug`. Los demás todavía no aparecen.
+
+**`Data/Monsters`**: los campos son vida / daño / monedas mín / monedas máx / planeador / duración de movimiento al azar / botín / resiliencia / nerviosismo / umbral de persecución / velocidad / fallo / de mina / experiencia / nombre.
+- El botín se tira al crear el monstruo: cada par `id prob` entra si `NextDouble() < prob`.
+
+**Base `Monster`**:
+- Caja `(X+8, Y+16, 48, 32)`.
+- `withinPlayerThreshold(n)`: el tile del centro está a ≤ n del tile del granjero en ambos ejes.
+- Movimiento por tick:
+  - Si persigue y el granjero está dentro del umbral: elige eje hacia la posición del granjero con margen 16 px. Primero el horizontal si no se movió en X; si ningún eje está libre, se detiene. Con 0,1% de probabilidad, si quedó quieto, toma una dirección perpendicular por 700 ms.
+  - Si no persigue: con `nerviosismo·1,8` elige `Next(6)` (4 direcciones o detenerse).
+- `MovePosition`, con la velocidad de empuje:
+  - Se subdivide si supera el tamaño de la caja.
+  - Si no choca: `X += vx; Y −= vy` y luego `v −= v/resbaladizo`.
+  - Si choca: `v −= v/resbaladizo/4` cuando resbaladizo ≥ 8.
+  - Valores menores a 0,05 pasan a 0.
+- Después se mueve `speed` px en cada dirección activa.
+- Moverse hacia la caja del granjero cuenta como choque y llama a `takeDamage(daño)`.
+
+**`GreenSlime`**:
+- Por nivel < 40:
+  - Color `(g/Next(2,10), g = Next(200,256), 1% ? 255 : 255−g)`.
+  - 1% especial si `N%5 ∉ {0,1}`: color (205,255,0)·0,7, vida ×3, daño ×2, ítem especial.
+  - 49% "tierno": vida +1/4, daño +1.
+  - Resbaladizo 3. Deriva izquierda al 50%.
+- Comportamiento:
+  - Si está dentro del umbral y pasaron 4000 ms (1000 si está enfocado) desde el último salto: 1% por tick de preparar un salto de 800 ms (cuadros 16 + (800−t)/200).
+  - El salto pone resbaladizo 10, sigue persiguiendo y aplica `−(empuje lejos del granjero)/2`.
+  - Con 10% por tick deriva `speed` px de lado y cambia de deriva con 8%.
+- Dibujo:
+  - Sombra en `(X+32, Y+36+yOffset)`, escala `4 − (cuadro%4%3 ≠ 0) + yOffset/30`.
+  - Cuerpo gris teñido con el color, origen (8,16), en `(X+32, Y+16+yOffset)`.
+  - Cara `(32 + (preparando o enfocado ? 16 : 0), 120 + (sin preparar y (enfocado o invencible) ? 24 : 0), 16, 24)`, desplazada `cara·4` (se mueve ±8 según la dirección) más el rebote del cuadro. Alfa 0,5 mirando arriba.
+  - `yOffset` baja con la velocidad y vuelve a 0.
+
+**`Bug`**:
+- Cuadros de 16×16 a 40 ms. No persigue: avanza en su dirección y la invierte al chocar, salvo contra el granjero.
+- Sombra en `(X+32, Y+32)`. Cuerpo con origen (8,16) en `(X+32, Y)`, oscilando ±10 px (`sin(ms/1000·2π)`) en el eje perpendicular.
+
+**Espada** (`MeleeWeapon` tipos 0 y 3, y la guadaña):
+- Animación por dirección:
+  - Abajo: cuadros 24–29 con brazo secundario.
+  - Derecha: 30–35 con brazo secundario.
+  - Arriba: 36–41.
+  - Izquierda: 30–35 volteados.
+  - Tiempos 55/45/25/25/25 ms y `2·(400−vel·40)/8·1,3` (130 ms con velocidad 0).
+- Cada cuadro llama a `showSwordSwipe` → `DoDamage`:
+  - Área `getAreaOfEffect` según dirección y cuadro (base 64×64, o 64×96 hacia abajo, con desplazamientos por cuadro).
+  - Corta pasto y malezas en los tiles del borde del área, y golpea monstruos.
+- El sprite (16×16 de `TileSheets/weapons`) se dibuja con origen (1,15) y escala 4, en `Position +` una tabla de 8 poses por dirección (x, y, rotación, volteo).
+  - Profundidad: +1 para las poses tempranas a la derecha e izquierda. Si no, +1 arriba, +15 abajo y +20 a los lados.
+
+**`damageMonster`**:
+- Daño `Next(mín, máx+1)`.
+- Crítico si `r < crit + suerte·crit/40`: ×multiplicador (+50% con profesión 25).
+- `máx(1, daño + ataque·3)`, luego ×1,1 (24), ×1,15 (26) y ×2 si es crítico (29).
+- `takeDamage`:
+  - `máx(1, daño − resiliencia)`.
+  - Falla si `r < fallo − fallo·precisión/10`.
+  - Empuje `(lejos del granjero)·knockback/3`. La dirección lejos del granjero se normaliza y se multiplica por `50 + Next(−20,20)` en cada eje.
+- Invencibilidad de 225 ms (150 con dagas).
+- Números de daño: naranja (255,130,0); amarillo con escala `1+daño/300` en críticos.
+- Al morir:
+  - Suelta el botín y da la experiencia de combate (1/3 en la granja).
+  - Polvo de `animations` fila 44.
+
+**Daño al granjero** (`Farmer.takeDamage`):
+- `daño + Next(mín(−1, −d/8), máx(1, d/8))`, menos defensa (con alivio aleatorio si defensa ≥ d/2). Mínimo 1.
+- 1200 ms de invencibilidad con parpadeo. Número rojo.
+- Con vida 0, desmayo:
+  - En las minas se revive en `Mine` (22,9). Si no, en `Hospital` (20,12).
+  - Vuelve con vida 10.
+- La vida se repone al dormir.
+
+**Barra de vida**:
+- Visible en las minas o con vida < máxima.
+- 56 px a la izquierda de la de energía, en `y = alto − 240 − (máx−100)`.
+- Piezas `Cursors (268,408/424/448,12,16)`. Relleno `168+(máx−100)` con color rojo→verde y los 4 px superiores más oscuros.
+- Con vida < 20 pulsa en rosa.
+
+**Espada inicial**: la primera vez que se entra a `Mine` se recibe la Espada oxidada `(W)0` y se marca el evento 100162. El evento de Marlon todavía no se reproduce.
+
+**Aproximaciones**:
+- Solo hay slimes y bichos.
+- Faltan dagas, mazos, especiales, anillos, defensa, buffs, botín extra (`getExtraDropItems`) y apareamiento de slimes.
+- Sin deslizamiento en esquinas para monstruos, brillo exacto (se usa un pulso rojo), sacudida de pantalla, sonidos, ni pérdida de ítems al desmayarse.
+- No hay mensaje al desmayarse.
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:

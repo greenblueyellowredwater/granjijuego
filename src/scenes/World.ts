@@ -24,7 +24,9 @@ import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, 
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
 import { dayTileGlows, LightContext, locationLights, torchLight, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
 import { LightingOverlay } from "../render/lighting.ts";
-import { checkStoneForItems, LADDER_DOWN, LADDER_UP, MINE_SHEET, mineLadderLights, mineLevelOf, mineLighting, mineLocationName, mineMapImage, mineMapNumber, outdoorStoneDestroyed, populateLevel, type MineMap, type MinerContext } from "../world/mines.ts";
+import { numberSpriteQuads } from "../render/skills-page.ts";
+import { createBug, createGreenSlime, damageMonsters, FARMER_INVINCIBLE_MS, farmerTakeDamage, healthBarLayout, monsterBox, parseMonsterData, standingPixel, SWORD_FRAMES, swordArea, swordFrameTimes, swordPose, updateMonster, type Monster } from "../world/monsters.ts";
+import { type MonsterSpawn, checkStoneForItems, LADDER_DOWN, LADDER_UP, MINE_SHEET, mineLadderLights, mineLevelOf, mineLighting, mineLocationName, mineMapImage, mineMapNumber, outdoorStoneDestroyed, populateLevel, type MineMap, type MinerContext } from "../world/mines.ts";
 import { DIALOGUE_FONT, Hud, HUD_DEPTH, type HudStrings } from "../render/hud.ts";
 import { QuestionBox } from "../render/question.ts";
 import { SpriteFont, type SpriteFontData } from "../render/spritefont.ts";
@@ -43,6 +45,7 @@ import {
   wateringAnimation,
   type FrameBehavior,
   type ToolKind,
+  weaponAnimation,
 } from "../world/tools.ts";
 import { addItem, canStackWith, consumeOne, isPlaceableObject, maximumStack } from "../world/items.ts";
 
@@ -64,7 +67,7 @@ import { objectBasePrice, shopStock, toolUpgrades, type ShopData, type ToolUpgra
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canApplyFertilizer, canTill, fertilizerQualityLevel, fertilizerSpeedBoost, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
-import { FARMING, farmerTitleKey, FISHING, FORAGING, gainExperience, harvestExperience, levelForExperience, MINING } from "../world/skills.ts";
+import { COMBAT, FARMING, farmerTitleKey, FISHING, FORAGING, gainExperience, harvestExperience, levelForExperience, MINING } from "../world/skills.ts";
 import { checkConditions, daySaveRandom, type GsqState } from "../world/gsq.ts";
 import {
   bedSleepTile,
@@ -91,6 +94,7 @@ import {
   farmerBox,
   findOpenTile,
   positionForTile,
+  rectCollides,
   shadowAboveBuildings,
   step,
   TICK_MS,
@@ -100,6 +104,8 @@ import {
 
 const PIXEL_SCALE = TILE / 16;
 const SHADOW_TEXTURE = "LooseSprites/shadow";
+const CURSORS_TEXTURE = "LooseSprites/Cursors";
+const MARLON_SWORD_EVENT = "event:100162";
 const FARMER_TABLES = "generated/farmer";
 const MAX_TICKS_PER_FRAME = 8;
 const TICK_REAL_MS = 1000 / TICKS_PER_SECOND;
@@ -170,6 +176,7 @@ export interface WorldData {
   shops: Record<string, ShopData>;
   machines: Record<string, MachineData>;
   fish: Record<string, string>;
+  monsters?: Record<string, string>;
   strings: Record<string, Record<string, string>>;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
@@ -249,6 +256,12 @@ export class World extends Phaser.Scene {
   private tempPool: Phaser.GameObjects.Image[] = [];
   private mine: { level: number; stonesLeft: number; ladderHasSpawned: boolean; enemies: number; lighting: [number, number, number, number]; start: { x: number; y: number } } | null = null;
   private shakes = new Map<Entity, number>();
+  private monsters: Monster[] = [];
+  private monsterImages = new Map<Monster, Phaser.GameObjects.Image[]>();
+  private farmerInvincible = 0;
+  private floaters: { n: number; x: number; y: number; color: number; scale: number; age: number; vy: number }[] = [];
+  private floaterPool: Phaser.GameObjects.Image[] = [];
+  private knockedOut = false;
 
   constructor() {
     super("World");
@@ -291,6 +304,12 @@ export class World extends Phaser.Scene {
     this.tempPool = [];
     this.mine = null;
     this.shakes = new Map();
+    this.monsters = [];
+    this.monsterImages = new Map();
+    this.farmerInvincible = 0;
+    this.floaters = [];
+    this.floaterPool = [];
+    this.knockedOut = false;
   }
 
   private get outdoors() {
@@ -357,6 +376,7 @@ export class World extends Phaser.Scene {
     }
     textures.add(SPRITE_TEXT_TEXTURE);
     textures.add(EMOTE_TEXTURE);
+    if (mineLevelOf(this.params.start.location) !== null) for (const m of ["Green Slime", "Bug"]) textures.add(`Characters/Monsters/${m}`);
     for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont", "LooseSprites/Cursors2", "TileSheets/BuffsIcons", "TileSheets/Craftables", "TileSheets/Objects_2", "Maps/springobjects", "TileSheets/tools", "TileSheets/weapons"]) textures.add(t);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
@@ -409,6 +429,171 @@ export class World extends Phaser.Scene {
     this.location.setSolids(this.staticSolids);
     for (const e of this.entities) this.addEntitySprites(e);
     if (level$.ladder) this.createLadderDown(level$.ladder.x, level$.ladder.y);
+    for (const spawn of level$.monsters) {
+      const m = this.createMonster(spawn, level);
+      if (m) this.monsters.push(m);
+    }
+  }
+
+  private createMonster(spawn: MonsterSpawn, level: number) {
+    const raw = this.params.monsters?.[spawn.name];
+    if (!raw) return null;
+    const stats = parseMonsterData(raw);
+    const r = new DotNetRandom(Math.floor(Math.random() * 2147483647));
+    const m =
+      spawn.name === "Green Slime" ? createGreenSlime(stats, spawn.x * TILE, spawn.y * TILE, level, r) : spawn.name === "Bug" ? createBug(stats, spawn.x * TILE, spawn.y * TILE, spawn.facing ?? 0, r) : null;
+    if (m && spawn.special) m.hasSpecialItem = true;
+    return m;
+  }
+
+  private tickMonsters() {
+    if (this.farmerInvincible > 0) this.farmerInvincible -= TICK_MS;
+    if (!this.monsters.length) return;
+    const farmer = farmerBox(this.body.x, this.body.y);
+    const random = new DotNetRandom(Math.floor(Math.random() * 2147483647));
+    const world = {
+      collides: (r: { x: number; y: number; w: number; h: number }) => rectCollides(this.location, r),
+      farmer,
+      farmerPosition: { x: this.body.x, y: this.body.y },
+      hitFarmer: (m: Monster) => this.hitFarmer(m),
+      random,
+    };
+    for (const m of this.monsters) updateMonster(m, world, TICK_MS);
+  }
+
+  private hitFarmer(m: Monster) {
+    const state = this.params.state;
+    if (this.farmerInvincible > 0 || this.warping || this.endingDay || this.knockedOut) return;
+    const res = farmerTakeDamage(state.health, m.damage, new DotNetRandom(Math.floor(Math.random() * 2147483647)));
+    state.health = res.health;
+    this.farmerInvincible = FARMER_INVINCIBLE_MS;
+    const b = farmerBox(this.body.x, this.body.y);
+    this.floaters.push({ n: res.damage, x: b.x + b.w / 2 + 8, y: b.y + b.h / 2, color: 0xff0000, scale: 1, age: 0, vy: -3 });
+    if (state.health <= 0) this.knockOut();
+  }
+
+  private knockOut() {
+    if (this.knockedOut) return;
+    this.knockedOut = true;
+    const state = this.params.state;
+    const target = this.mine ? { location: "Mine", x: 22, y: 9 } : { location: "Hospital", x: 20, y: 12 };
+    this.cameras.main.fade(1000, 0, 0, 0, true);
+    this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
+      state.health = 10;
+      this.params.store.save(state);
+      this.scene.restart({ ...this.params, start: { location: target.location, x: target.x, y: target.y, facing: Facing.Down } });
+    });
+  }
+
+  private weaponHit(frame: number) {
+    const t = this.tool;
+    if (!t) return;
+    const state = this.params.state;
+    const item = state.inventory[state.currentToolIndex];
+    const data = item ? (this.params.items.weapons[parseId(item.id).id] as unknown as Record<string, number> | undefined) : undefined;
+    if (!data) return;
+    const box = farmerBox(this.body.x, this.body.y);
+    const area = swordArea(t.facing, toolLocation(this.body.x, this.body.y, t.facing), box, frame);
+    const hits = damageMonsters(
+      this.monsters,
+      area,
+      { minDamage: data.MinDamage ?? 1, maxDamage: data.MaxDamage ?? 3, knockback: data.Knockback ?? 1, precision: data.Precision ?? 0, critChance: data.CritChance ?? 0.02, critMultiplier: data.CritMultiplier ?? 3, type: data.Type ?? 0 },
+      { box, facing: t.facing, luckLevel: 0, professions: state.professions ?? [] },
+      new DotNetRandom(Math.floor(Math.random() * 2147483647)),
+    );
+    for (const h of hits) {
+      const b = monsterBox(h.monster);
+      if (h.damage > 0) this.floaters.push({ n: h.damage, x: b.x + b.w / 2 + 16, y: b.y + b.h / 2, color: h.crit ? 0xffff00 : 0xff8200, scale: h.crit ? 1 + h.damage / 300 : 1, age: 0, vy: -3 });
+      if (h.killed) this.monsterKilled(h.monster);
+    }
+    const tiles = new Map<string, { x: number; y: number }>();
+    for (let px = area.x; px <= area.x + area.w; px += Math.min(64, area.w || 64)) {
+      for (const py of [area.y, area.y + area.h]) tiles.set(`${Math.floor(px / TILE)},${Math.floor(py / TILE)}`, { x: Math.floor(px / TILE), y: Math.floor(py / TILE) });
+    }
+    for (let py = area.y; py <= area.y + area.h; py += Math.min(64, area.h || 64)) {
+      for (const px of [area.x, area.x + area.w]) tiles.set(`${Math.floor(px / TILE)},${Math.floor(py / TILE)}`, { x: Math.floor(px / TILE), y: Math.floor(py / TILE) });
+    }
+    for (const tile of tiles.values()) {
+      const grass = this.entities.find((e) => e.kind === "grass" && e.x === tile.x && e.y === tile.y);
+      if (grass) this.removeEntity(grass);
+      const obj = this.entities.find((e): e is Extract<Entity, { kind: "object" }> => e.kind === "object" && e.x === tile.x && e.y === tile.y);
+      const odata = obj ? (this.params.items.objects[obj.itemId] as { Name?: string; Category?: number } | undefined) : undefined;
+      if (obj && debrisKind(odata?.Name, odata?.Category) === "weeds") this.hitObjectAt(tile.x, tile.y, "scythe");
+      if (t.kind === "scythe") this.hitTreeAt(tile.x, tile.y, "scythe");
+    }
+  }
+
+  private monsterKilled(m: Monster) {
+    const state = this.params.state;
+    const s = standingPixel(m);
+    const tx = Math.floor(s.x / TILE), ty = Math.floor(s.y / TILE);
+    this.dropItems(m.drops.filter((id) => !id.startsWith("-")), tx, ty);
+    gainExperience(state, COMBAT, m.experience);
+    this.temps.push(animationSprite(44, m.x, m.y - 16, 10, false, 70));
+    this.monsters = this.monsters.filter((x) => x !== m);
+    for (const img of this.monsterImages.get(m) ?? []) img.destroy();
+    this.monsterImages.delete(m);
+  }
+
+  private drawMonsters(time: number) {
+    for (const m of this.monsters) {
+      const texture = `Characters/Monsters/${m.name}`;
+      if (!this.textures.exists(texture)) continue;
+      let imgs = this.monsterImages.get(m);
+      if (!imgs) {
+        imgs = [this.add.image(0, 0, SHADOW_TEXTURE), this.add.image(0, 0, texture), this.add.image(0, 0, texture), this.add.image(0, 0, texture)];
+        this.monsterImages.set(m, imgs);
+      }
+      const [shadow, body, face, glow] = imgs;
+      const tex = this.textures.get(texture);
+      const frameOf = (sx: number, sy: number, sw: number, sh: number) => {
+        const name = `${sx},${sy},${sw},${sh}`;
+        if (!tex.has(name)) tex.add(name, 0, sx, sy, sw, sh);
+        return name;
+      };
+      const standY = standingPixel(m).y;
+      const glowAlpha = m.invincible > 0 ? 0.5 + 0.5 * Math.sin(time / 30) : 0;
+      if (m.kind === "slime") {
+        const f = m.frame;
+        const bodyFrame = frameOf((f % 4) * 16, Math.floor(f / 4) * 24, 16, 24);
+        body.setTexture(texture, bodyFrame).setOrigin(0.5, 16 / 24).setScale(4).setPosition(m.x + 32, m.y + 16 + m.yOffset).setTint((m.color[0] << 16) | (m.color[1] << 8) | m.color[2]).setDepth(this.rendered.spriteDepth(standY / 10000)).setVisible(true);
+        const shrink = (f % 4) % 3 !== 0 ? 1 : 0;
+        shadow.setOrigin(0.5, 0.5).setPosition(m.x + 32, m.y + 28 + m.yOffset + 8).setScale(3 + 1 - shrink + m.yOffset / 30).setDepth(this.rendered.spriteDepth((standY - 1) / 10000)).setVisible(true);
+        const jump = m.readyToJump > 0 ? 4 - 4 * ((f % 4) % 3) : 4 * (-2 + Math.abs((f % 4) - 2));
+        const fx = 32 + (m.readyToJump > 0 || m.focused ? 16 : 0), fy = 120 + (m.readyToJump < 0 && (m.focused || m.invincible > 0) ? 24 : 0);
+        face.setTexture(texture, frameOf(fx, fy, 16, 24)).setOrigin(0.5, 16 / 24).setScale(4).setPosition(m.x + 32 + m.face.x * 4, m.y + 16 + jump + m.yOffset + m.face.y * 4).setAlpha(m.facing === 0 ? 0.5 : 1).setDepth(this.rendered.spriteDepth(standY / 10000 + 0.0001)).setVisible(true);
+        glow.setTexture(texture, bodyFrame).setOrigin(0.5, 16 / 24).setScale(4).setPosition(m.x + 32, m.y + 16 + m.yOffset).setTintFill(0xff0000).setAlpha(glowAlpha).setDepth(this.rendered.spriteDepth(standY / 10000 + 0.001)).setVisible(glowAlpha > 0);
+      } else {
+        const wob = Math.sin(((time % 1000) / 1000) * Math.PI * 2) * 10;
+        const ox = m.facing % 2 === 0 ? wob : 0, oy = m.facing % 2 === 0 ? 0 : wob;
+        const bodyFrame = frameOf((m.frame % 4) * 16, Math.floor(m.frame / 4) * 16, 16, 16);
+        shadow.setOrigin(0.5, 0.5).setPosition(m.x + 32 + ox, m.y + 32).setScale(4).setDepth(this.rendered.spriteDepth(standY / 10000 - 1e-6)).setVisible(true);
+        body.setTexture(texture, bodyFrame).setOrigin(0.5, 1).setScale(4).setPosition(m.x + 32 + ox, m.y + oy).setDepth(this.rendered.spriteDepth(standY / 10000)).setVisible(true);
+        face.setVisible(false);
+        glow.setTexture(texture, bodyFrame).setOrigin(0.5, 1).setScale(4).setPosition(m.x + 32 + ox, m.y + oy).setTintFill(0xff0000).setAlpha(glowAlpha).setDepth(this.rendered.spriteDepth(standY / 10000 + 0.001)).setVisible(glowAlpha > 0);
+      }
+    }
+  }
+
+  private drawFloaters(ms: number) {
+    let used = 0;
+    this.floaters = this.floaters.filter((f) => {
+      f.age += ms;
+      f.y += f.vy;
+      f.vy = Math.min(f.vy + 0.2, 0);
+      if (f.age > 1000) return false;
+      if (!this.textures.exists(CURSORS_TEXTURE)) return true;
+      const tex = this.textures.get(CURSORS_TEXTURE);
+      for (const q of numberSpriteQuads(f.n, f.x, f.y, f.scale)) {
+        const frame = `${q.sx},${q.sy},8,8`;
+        if (!tex.has(frame)) tex.add(frame, 0, q.sx, q.sy, 8, 8);
+        const img = this.floaterPool[used] ?? this.add.image(0, 0, CURSORS_TEXTURE, frame).setOrigin(0, 0);
+        this.floaterPool[used++] = img;
+        img.setTexture(CURSORS_TEXTURE, frame).setPosition(q.x, q.y).setScale(4 * f.scale).setTint(f.color).setAlpha(Math.min(1, (1000 - f.age) / 300)).setDepth(this.rendered.spriteDepth(0.99)).setVisible(true);
+      }
+      return true;
+    });
+    for (let i = used; i < this.floaterPool.length; i++) this.floaterPool[i].setVisible(false);
   }
 
   private isStoneId(id: string) {
@@ -442,6 +627,11 @@ export class World extends Phaser.Scene {
 
   private spawnTerrain() {
     const { state, store } = this.params;
+    if (this.location.name === "Mine" && !state.flags.includes(MARLON_SWORD_EVENT)) {
+      state.flags.push(MARLON_SWORD_EVENT);
+      addItem(state.inventory, { id: "(W)0", stack: 1 });
+      store.save(state);
+    }
     const level = mineLevelOf(this.location.name);
     if (level !== null) {
       this.spawnMine(level);
@@ -840,7 +1030,11 @@ export class World extends Phaser.Scene {
     const item = this.params.state.inventory[this.params.state.currentToolIndex];
     if (!item) return null;
     const { type, id } = parseId(item.id);
-    if (type === "W" && id === "47") return { kind: "scythe" as ToolKind, initial: -1, texture: "TileSheets/weapons", upgradeLevel: 0 };
+    if (type === "W") {
+      const w = this.params.items.weapons[id] as { Type?: number; Texture?: string | null; SpriteIndex: number; Speed?: number } | undefined;
+      if (!w || w.Type === 1 || w.Type === 2) return null;
+      return { kind: (id === "47" ? "scythe" : "weapon") as ToolKind, initial: w.SpriteIndex, texture: (w.Texture ?? "TileSheets/weapons").replace(/\\/g, "/"), upgradeLevel: 0, speed: w.Speed ?? 0 };
+    }
     if (type !== "T") return null;
     const data = this.params.items.tools[id];
     if (!data) return null;
@@ -937,12 +1131,22 @@ export class World extends Phaser.Scene {
     this.body.facing = facing;
     const at = target ?? toolLocation(this.body.x, this.body.y, facing);
     if (t.kind === "wateringCan" && state.waterLeft <= 0 && !this.location.isWater(Math.floor(at.x / TILE), Math.floor(at.y / TILE))) return;
-    const frames = t.kind === "wateringCan" ? wateringAnimation(facing) : swingAnimation(facing);
+    const sword = SWORD_FRAMES[facing];
+    const frames =
+      t.kind === "scythe" || t.kind === "weapon"
+        ? weaponAnimation(facing, sword.frames, swordFrameTimes((t as { speed?: number }).speed ?? 0), sword.flip, sword.arm)
+        : t.kind === "wateringCan"
+          ? wateringAnimation(facing)
+          : swingAnimation(facing);
     this.tool = { kind: t.kind, initial: t.initial, facing, texture: t.texture, target: at, upgradeLevel: t.upgradeLevel ?? 0, anim: null as unknown as SingleAnimation };
     this.tool.anim = new SingleAnimation(frames, (b) => this.onToolBehavior(b));
   }
 
   private onToolBehavior(b: FrameBehavior) {
+    if (b === "swordSwipe" && this.tool) {
+      this.weaponHit(this.tool.anim?.index ?? 0);
+      return;
+    }
     if (b !== "useTool" || !this.tool) return;
     const state = this.params.state;
     const tx = Math.floor(this.tool.target.x / TILE), ty = Math.floor(this.tool.target.y / TILE);
@@ -989,6 +1193,10 @@ export class World extends Phaser.Scene {
 
   private drawTool() {
     const t = this.tool;
+    if (t && (t.kind === "scythe" || t.kind === "weapon")) {
+      this.drawWeapon();
+      return;
+    }
     const transform = t ? toolDrawTransform(t.kind, t.facing, t.anim.index) : null;
     if (!t || !transform || !this.textures.exists(t.texture)) {
       this.toolImage?.setVisible(false);
@@ -1009,7 +1217,35 @@ export class World extends Phaser.Scene {
       .setPosition(Math.floor(this.body.x) + transform.x, Math.floor(this.body.y) + transform.y)
       .setRotation(transform.rotation)
       .setFlipX(transform.flip)
+      .setFlipY(false)
       .setDepth(this.rendered.spriteDepth(layer))
+      .setVisible(true);
+  }
+
+  private drawWeapon() {
+    const t = this.tool!;
+    if (t.anim.index >= 6 || !this.textures.exists(t.texture)) {
+      this.toolImage?.setVisible(false);
+      return;
+    }
+    const tex = this.textures.get(t.texture);
+    const width = tex.getSourceImage().width;
+    const sx = (t.initial * 16) % width, sy = Math.floor((t.initial * 16) / width) * 16;
+    const frame = `${sx},${sy},16,16`;
+    if (!tex.has(frame)) tex.add(frame, 0, sx, sy, 16, 16);
+    this.toolImage ??= this.add.image(0, 0, t.texture, frame).setScale(PIXEL_SCALE);
+    const pose = swordPose(t.facing, t.anim.index);
+    const box = farmerBox(this.body.x, this.body.y);
+    const offset = pose.front ? (t.facing === 0 ? 1 : t.facing === 2 ? 15 : 20) : 1;
+    this.toolImage
+      .setTexture(t.texture, frame)
+      .setOrigin(1 / 16, 15 / 16)
+      .setScale(PIXEL_SCALE)
+      .setPosition(Math.floor(this.body.x) + pose.x, Math.floor(this.body.y) + pose.y)
+      .setRotation(pose.rotation)
+      .setFlipX(pose.flipX)
+      .setFlipY(pose.flipY)
+      .setDepth(this.rendered.spriteDepth((box.y + box.h / 2) / 10000 + offset * 1e-6))
       .setVisible(true);
   }
 
@@ -2164,6 +2400,7 @@ export class World extends Phaser.Scene {
       resetFriendshipsForNewDay(state.friendship, (name) => (name in this.params.characters ? !!this.params.characters[name].CanBeRomanced : null), totalDays(state.year, state.season, state.dayOfMonth));
       this.params.setupNpcs();
       state.stamina = state.maxStamina;
+      state.health = state.maxHealth;
       clock.time = 600;
       clock.interval = 0;
       clock.shakeMs = 0;
@@ -2258,6 +2495,7 @@ export class World extends Phaser.Scene {
     const pressed = this.pressed();
     if (!this.canMove) pressed.clear();
     this.tickTool();
+    this.tickMonsters();
     this.updateNpcs();
     this.updateDrops();
     this.tickTrees();
@@ -2314,6 +2552,9 @@ export class World extends Phaser.Scene {
         money: state.money,
         stamina: state.stamina,
         maxStamina: state.maxStamina,
+        health: state.health,
+        maxHealth: state.maxHealth,
+        showHealth: !!this.mine || state.health < state.maxHealth,
         shaking: clock.shakeMs > 0,
         timePasses: this.timePasses,
         totalMs: time,
@@ -2334,6 +2575,7 @@ export class World extends Phaser.Scene {
     const drawLayer = (box.y + box.h / 2) / 10000;
     this.shadow.setDepth(shadowAboveBuildings(this.location, this.body) ? this.rendered.spriteDepth(drawLayer - 1e-6) : this.rendered.belowBuildingsDepth);
     this.farmer.update(f, this.body.facing, x, y, drawLayer, (ld) => this.rendered.spriteDepth(ld));
+    if (this.farmerInvincible > 0 && Math.floor(this.farmerInvincible / 50) % 2 === 1) this.farmer.setVisible(false);
     this.drawTool();
   }
 
@@ -2365,6 +2607,8 @@ export class World extends Phaser.Scene {
     this.redrawDirt();
     this.drawDrops();
     this.drawNpcs();
+    this.drawMonsters(time);
+    this.drawFloaters(delta);
     this.drawTemps(delta);
     this.tickShakes(delta);
     this.drawLightingAndHud(time);

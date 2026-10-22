@@ -19,6 +19,8 @@ export interface GameState {
   currentToolIndex: number;
   stamina: number;
   maxStamina: number;
+  health: number;
+  maxHealth: number;
   waterLeft: number;
   flags: string[];
   shipping: Item[];
@@ -54,6 +56,8 @@ export function newGameState(random = Math.random): GameState {
     currentToolIndex: 0,
     stamina: 270,
     maxStamina: 270,
+    health: 100,
+    maxHealth: 100,
     waterLeft: 40,
     flags: [],
     shipping: [],
@@ -83,6 +87,8 @@ export function withDefaults(state: GameState): GameState {
     currentToolIndex: state.currentToolIndex ?? 0,
     stamina: state.stamina ?? 270,
     maxStamina: state.maxStamina ?? 270,
+    health: state.health ?? 100,
+    maxHealth: state.maxHealth ?? 100,
     waterLeft: state.waterLeft ?? 40,
     flags: state.flags ?? [],
     shipping: state.shipping ?? [],
