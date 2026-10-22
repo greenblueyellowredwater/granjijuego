@@ -1040,7 +1040,29 @@ Aproximaciones:
 - Sin efecto de velocidad en las fases.
 - Sin luz ni llama animada en la antorcha.
 - Sin cerca conectada, caminos (`Flooring`) ni retoños.
-- Sin interfaz de cofre.
+- Interfaz de cofre: ver spec S20.
+
+## Spec S20: cofres (`ItemGrabMenu` de un `Chest`)
+
+**Apertura**:
+- La acción sobre un gran fabricable `(BC)130` (cofre) o `(BC)232` (cofre de piedra) abre el menú.
+- El cofre guarda 36 casillas, persistidas con la entidad.
+- Lo cierran OK, Esc o E. El reloj no avanza con el menú abierto y la barra se oculta.
+
+**Layout** (`MenuWithInventory` con `menuOffsetHack` 64):
+- Menú de 880×680 centrado, bajado 64 px (y nunca sobre `y < 136`). Fondo negro a 0,5.
+- Inventario del jugador (no de jugador, con grises) en `(x+36, y+312)`, dentro de la caja `drawDialogueBox(x−20, y+200, 880, 680−328)`.
+- Cofre (`InventoryMenu` de 36 en 3 filas) en `(x+32, y)`, dentro de la caja `(x−24, y−136, 880, 384)`.
+- OK `(128,256,64,64)` en `(x+w+4, y+h−232)` y tacho en `(x+w+4, y+h−368)`.
+- Botón de color `(119,469,16,16)` en `(x+w, y + h/3 − 224)` (sin función).
+- Pestañas laterales (`Cursors (16,368,12,16)` y `(21,368,11,16)` rotadas 270°, más `(4,372,8,11)`) a la izquierda del inventario, y `(127,412,10,11)` a la izquierda del cofre.
+
+**Interacción** (`grabItemFromInventory` / `grabItemFromChest`):
+- Clic izquierdo mueve la pila entera al otro lado. Clic derecho mueve una unidad.
+- Se suma primero a pilas iguales y después a casillas libres. Lo que no entra queda en el origen.
+- El jugador solo usa sus primeras 12 casillas (mochila inicial).
+
+Aproximaciones: sin selector de color, sin ordenar, sin animación de tapa ni del ítem transferido y sin tacho funcional en este menú.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

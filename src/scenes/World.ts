@@ -12,6 +12,7 @@ import { DEFAULT_APPEARANCE, pantsInfo, shirtInfo, type ClothingData } from "../
 import { GameMenu } from "../render/game-menu.ts";
 import { LevelUpMenu } from "../render/levelup-menu.ts";
 import { ShippingMenu } from "../render/shipping-menu.ts";
+import { ChestMenu } from "../render/chest-menu.ts";
 import { summarizeShipping } from "../world/shipping.ts";
 import { extraInfoKeys, learnDefaultRecipes, professionChoices, recipesUnlockedAt } from "../world/levelup.ts";
 import { sortSocialEntries, type SocialEntry } from "../render/social-page.ts";
@@ -214,6 +215,7 @@ export class World extends Phaser.Scene {
   private gameMenu: GameMenu | null = null;
   private levelUp: LevelUpMenu | null = null;
   private shipping: ShippingMenu | null = null;
+  private chestMenu: ChestMenu | null = null;
   private menuFarmer: FarmerSprite | null = null;
   private smallFont: SpriteFont | null = null;
   private dialogueFont: SpriteFont | null = null;
@@ -987,6 +989,7 @@ export class World extends Phaser.Scene {
     this.dialogueFont = fontData ? new SpriteFont(fontData) : null;
     learnDefaultRecipes(this.params.state, this.params.recipes);
     this.shipping = new ShippingMenu(this, HUD_DEPTH + 55);
+    this.chestMenu = new ChestMenu(this, HUD_DEPTH + 35);
     this.levelUp = new LevelUpMenu(this, HUD_DEPTH + 60, fontData, this.cache.json.get(SMALL_FONT_DATA) as SpriteFontData | undefined);
     this.menuFarmer = new FarmerSprite(this, this.appearance, this.params.clothing, this.featureXOffset, this.featureYOffset, true);
 
@@ -994,11 +997,12 @@ export class World extends Phaser.Scene {
     this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,X,E") as Record<string, Phaser.Input.Keyboard.Key>;
     kb.on("keydown-C", () => this.useToolButton());
     kb.on("keydown-X", () => (this.shipping?.summary ? this.finishShipping() : this.levelUp?.current ? this.finishLevelUp() : this.interact()));
-    kb.on("keydown-E", () => this.toggleGameMenu());
+    kb.on("keydown-E", () => (this.chestMenu?.open ? this.closeChest() : this.toggleGameMenu()));
     kb.on("keydown-ENTER", () => (this.dialogueBox?.open ? this.dialogueBox.advance() : this.question?.confirm()));
     kb.on("keydown-SPACE", () => this.question?.confirm());
     kb.on("keydown-ESC", () => {
       if (this.shop?.open) this.shop.close();
+      else if (this.chestMenu?.open) this.closeChest();
       else if (this.question?.open) this.question.cancel();
       else this.toggleGameMenu();
     });
@@ -1016,6 +1020,10 @@ export class World extends Phaser.Scene {
         const hit = this.levelUp.hit(this.cameras.main.width, this.cameras.main.height, p.x, p.y);
         if (hit?.kind === "ok") this.finishLevelUp();
         else if (hit?.kind === "profession") this.finishLevelUp(hit.profession);
+        return;
+      }
+      if (this.chestMenu?.open) {
+        this.chestClick(p.x, p.y, p.rightButtonDown());
         return;
       }
       if (this.gameMenu?.open) {
@@ -1117,6 +1125,58 @@ export class World extends Phaser.Scene {
     return true;
   }
 
+  private openChestEntity: Extract<Entity, { kind: "bigCraftable" }> | null = null;
+
+  private tryOpenChest(tx: number, ty: number) {
+    const chest = this.entities.find((e): e is Extract<Entity, { kind: "bigCraftable" }> => e.kind === "bigCraftable" && e.x === tx && e.y === ty && (e.itemId === "130" || e.itemId === "232"));
+    if (!chest || !this.chestMenu) return false;
+    chest.items ??= Array(36).fill(null);
+    this.openChestEntity = chest;
+    this.chestMenu.items = chest.items;
+    return true;
+  }
+
+  private closeChest() {
+    if (!this.chestMenu) return;
+    this.chestMenu.items = null;
+    this.openChestEntity = null;
+    this.params.store.save(this.params.state);
+  }
+
+  private chestClick(px: number, py: number, right: boolean) {
+    const menu = this.chestMenu!;
+    const items = menu.items!;
+    const inv = this.params.state.inventory;
+    const hit = menu.hit(this.cameras.main.width, this.cameras.main.height, px, py);
+    if (!hit) return;
+    if (hit.kind === "close") {
+      this.closeChest();
+      return;
+    }
+    const from = hit.kind === "chest" ? items : inv;
+    const to = hit.kind === "chest" ? inv : items;
+    const item = from[hit.slot];
+    if (!item || (hit.kind === "player" && hit.slot >= MAX_ITEMS)) return;
+    const moving: Item = right ? { ...item, stack: 1 } : { ...item };
+    const target = hit.kind === "chest" ? to.slice(0, MAX_ITEMS) : to;
+    const rest = addItem(target, moving);
+    if (hit.kind === "chest") for (let i = 0; i < MAX_ITEMS; i++) to[i] = target[i];
+    const moved = moving.stack - (rest?.stack ?? 0);
+    item.stack -= moved;
+    if (item.stack <= 0) from[hit.slot] = null;
+  }
+
+  private drawChest(pointer: { x: number; y: number }) {
+    const menu = this.chestMenu;
+    if (!menu) return;
+    const { state, strings } = this.params;
+    const w = this.cameras.main.width, h = this.cameras.main.height;
+    const ui = strings["Strings\\UI"] ?? {};
+    const hovered = menu.open ? menu.hovered(w, h, pointer.x, pointer.y, state.inventory) : null;
+    const fonts = this.smallFont && this.dialogueFont ? { small: this.smallFont, smallTexture: "Fonts/SmallFont", dialogue: this.dialogueFont, dialogueTexture: DIALOGUE_FONT } : null;
+    menu.draw(w, h, state.inventory, MAX_ITEMS, this.params.items, pointer, this.tooltipFor(hovered), fonts, { energy: ui.ItemHover_Energy ?? "{0} Energy", health: ui.ItemHover_Health ?? "{0} Health" });
+  }
+
   private toggleGameMenu() {
     const menu = this.gameMenu;
     if (!menu) return;
@@ -1124,7 +1184,7 @@ export class World extends Phaser.Scene {
       this.closeGameMenu();
       return;
     }
-    if (this.dialogueBox?.open || this.question?.open || this.shop?.open || this.endingDay || this.warping || this.tool) return;
+    if (this.dialogueBox?.open || this.question?.open || this.shop?.open || this.chestMenu?.open || this.endingDay || this.warping || this.tool) return;
     menu.open = true;
   }
 
@@ -1433,6 +1493,7 @@ export class World extends Phaser.Scene {
     }
     const t = facingTile(this.body);
     const npc = this.npcAt(t.x, t.y);
+    if (this.tryOpenChest(t.x, t.y)) return;
     if (npc && this.tryGift(npc)) return;
     if (npc && this.talkTo(npc)) return;
     if (this.tryOpenGiftbox(t.x, t.y)) return;
@@ -1465,7 +1526,7 @@ export class World extends Phaser.Scene {
   }
 
   private get timePasses() {
-    return !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.endingDay && !this.warping;
+    return !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.endingDay && !this.warping;
   }
 
   private get canMove() {
@@ -1635,13 +1696,14 @@ export class World extends Phaser.Scene {
     this.weatherFx?.draw(flags, this.outdoors, this.cameras.main, time);
     this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: flags.raining }));
     this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
-    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.dialogueBox?.open && !this.question?.open);
+    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.dialogueBox?.open && !this.question?.open);
     this.dialogueBox?.update(this.game.loop.rawDelta);
     this.shipping?.update(Math.min(250, this.game.loop.rawDelta));
     const pointer = this.input.activePointer;
     this.shop?.draw(this.cameras.main.width, this.cameras.main.height, (id) => this.itemName(id), state.money, state.inventory, this.params.items, { x: pointer.x, y: pointer.y }, (item) => parseId(item.id).type === "O" && (this.params.items.objects[parseId(item.id).id]?.Price ?? 0) > 0);
     const speaker = this.dialogueBox?.speaker ? `Portraits/${this.dialogueBox.speaker}` : null;
     this.drawGameMenu(pointer);
+    this.drawChest(pointer);
     this.shipping?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items);
     this.levelUp?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items, this.params.strings["Strings\\UI"] ?? {}, { x: pointer.x, y: pointer.y });
     this.dialogueBox?.draw(this.cameras.main.width, this.cameras.main.height, speaker && this.textures.exists(speaker) ? speaker : null);

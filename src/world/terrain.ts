@@ -32,7 +32,7 @@ export type Entity =
   | { kind: "tree"; x: number; y: number; treeId: string; stage: number; flipped: boolean; health?: number; stump?: boolean }
   | { kind: "fruitTree"; x: number; y: number; treeId: string; stage: number }
   | { kind: "object"; x: number; y: number; itemId: string; placed?: boolean }
-  | { kind: "bigCraftable"; x: number; y: number; itemId: string }
+  | { kind: "bigCraftable"; x: number; y: number; itemId: string; items?: ({ id: string; stack: number; quality?: number } | null)[] }
   | { kind: "clump"; x: number; y: number; index: number; w: number; h: number }
   | { kind: "bush"; x: number; y: number; size: number; flipped: boolean; townBush: boolean; drawShadow: boolean }
   | { kind: "grass"; x: number; y: number; grassType: number }

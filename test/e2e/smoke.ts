@@ -208,6 +208,31 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
+    "coloca un cofre, guarda ítems y lo recuerda",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=FarmHouse&x=5&y=9&time=900`);
+      await page.evaluate(`localStorage.clear()`);
+      await page.goto(`${BASE}/?map=FarmHouse&x=5&y=9&time=900`);
+      await waitStatus(page, /FarmHouse .* tile 5,9/);
+      await world(`(w.params.state.inventory[6] = { id: "(BC)130", stack: 1, quality: 0 }, w.params.state.inventory[7] = { id: "(O)24", stack: 7, quality: 0 }, w.selectSlot(6), w.body.facing = 3, 1)`);
+      await page.keyboard.press("c");
+      await new Promise((r) => setTimeout(r, 300));
+      await page.keyboard.press("x");
+      await new Promise((r) => setTimeout(r, 300));
+      if (!(await world(`w.chestMenu.open`))) throw new Error("No abrió el cofre");
+      await page.mouse.click(236 + 7 * 64 + 32, 436 - 4 + 32);
+      await new Promise((r) => setTimeout(r, 200));
+      await page.screenshot({ path: `${OUT}/chest.png` });
+      await page.keyboard.press("Escape");
+      await new Promise((r) => setTimeout(r, 200));
+      await page.reload();
+      await waitStatus(page, /FarmHouse .* tile/);
+      const saved = (await world(`JSON.stringify(w.entities.filter(function (e) { return e.kind === "bigCraftable"; }).map(function (e) { return [e.x, e.y, (e.items || []).filter(Boolean)]; }))`)) as string;
+      if (saved !== '[[4,9,[{"id":"(O)24","stack":7,"quality":0}]]]') throw new Error(`Cofre guardado: ${saved}`);
+    },
+  ],
+  [
     "abre el regalo, siembra, riega y cosecha una chirivía a los 4 días",
     async (page) => {
       const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
