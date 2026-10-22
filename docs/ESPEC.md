@@ -119,7 +119,7 @@ Cambio de día: `NewDay` → `newDayAfterFade` → clima, `GameLocation.DayUpdat
 | 3 | Reloj, días, estaciones, iluminación, HUD, sueño y clima | **hecho** (specs S6 y S7) |
 | 4 | Granja básica: azada, regadera, HoeDirt, cultivos, inventario, shipping | **hecho** en lo básico (spec S8) |
 | 5 | GameStateQuery, ItemQuery, tiendas, máquinas | |
-| 6 | NPCs: schedules, pathfinding, diálogo, regalos | |
+| 6 | NPCs: schedules, pathfinding, diálogo, regalos | **en curso** (spec S9): horarios, rutas, dibujo y diálogo diario; faltan regalos, animaciones de horario y eventos de corazón |
 | 7 | Eventos y TokenParser | |
 | 8 | Minas y combate | |
 | 9 | Pesca | |
@@ -535,6 +535,65 @@ Los objetos sueltos rebotan y, a menos de 128 px, vuelan al granjero y entran al
 - Color de rojo a verde: R = 255 si p ≤ 0,5 y si no `(1−p)·510`; G = `min(255, p·510)`. Lleva una franja superior de 4 px con R y G −50.
 
 Pendiente: animación de la guadaña (`MeleeWeapon`), árboles con hacha, animación de cosecha (279+dirección) y de apertura del regalo, menú de envíos nocturno, experiencia y niveles, y fertilizantes.
+
+## Spec S9: NPCs, horarios y diálogo
+
+Fuente: `NPC.TryLoadSchedule`, `parseMasterScheduleImpl`, `pathfindToNextScheduleLocation` (cálculo de llegada), `NPC.draw`, `Character.GetBoundingBox`, `DrawShadow`, `NPC.loadCurrentDialogue`, `tryToRetrieveDialogue`, `DialogueBox` (`.ctor`, `drawBox`, `drawPortrait`, `draw`, `update`) y `SpriteText` (`.cctor`, `drawString`, `getWidthOfString`, `getWidthOffsetForChar`, `getSourceRectForChar`, `positionOfNextSpace`).
+
+**Personajes:** los de `Data/Characters` que tienen `Home` y textura. Arrancan el día en su casa (`Home`), salvo que el horario tenga una entrada de hora 0.
+
+**Clave del horario.** Se elige la primera que exista, en este orden:
+1. `GreenRain`: año 1, día de lluvia verde.
+2. Festivales pasivos: `<id>_<día>` o `<id>`.
+3. `<estación>_<día>`.
+4. `<día>_<corazones…1>`, luego `<día>`.
+5. `bus`: solo Pam, con `ccVault`.
+6. Si llueve, `rain2` con probabilidad 0,5, si no `rain`.
+7. `<estación>_<díaSemana>_<c…1>`, luego `<estación>_<díaSemana>`.
+8. `<díaSemana>_<c…1>`, luego `<díaSemana>`.
+9. `<estación>`, `spring_<díaSemana>` y `spring`.
+
+`díaSemana` usa los nombres en inglés fijos (`Sun`…`Sat`, día mod 7). Los corazones son `puntos/250`.
+
+**Formato del horario.** Entradas separadas por `/` con la forma `[a]hora [location] x y [dirección] [animación] ["mensaje"]`:
+- Sin location, se usa la anterior. `bed` va a la última entrada de `default` o `spring`, o a la casa.
+- Una `a` delante marca hora de **llegada**: la salida se adelanta `round((píxeles/2)/420)·10` minutos.
+- Directivas: `GOTO clave` (`season` para la estación, `no_schedule` para no seguir horario); `NOT friendship NPC c …` (si se cumple, usa `spring`); `MAIL id` (salta 2 entradas si la carta existe, 1 si no).
+
+**Movimiento.**
+- Al llegar la hora de una entrada, el NPC calcula la ruta: la secuencia de locations sale de un BFS sobre el grafo de warps (generado al importar desde las propiedades `Warp` y las acciones `Warp`/`LockedDoorWarp` de cada mapa), y dentro de cada location usa A* de 4 direcciones con la transitabilidad del mapa.
+- Camina 2 px por tick, cambia de location al pisar el warp y al final mira hacia la dirección indicada.
+- Los mapas de las demás locations se cargan a demanda.
+- **Aproximaciones:** el A* no es idéntico al `PathFindController` del original, las rutas no consideran restricciones de género ni de acceso, y las animaciones de fin de ruta todavía no se reproducen.
+
+**Dibujo.**
+- Hoja 16×32, 4 cuadros por fila: abajo fila 0, derecha 1, arriba 2, izquierda 3. El paso cambia cada 175 ms.
+- Posición `(x+32, y+16)`, origen (8,24), escala 4 y profundidad `(y+32)/10000`.
+- Sombra en `(x+32, y+44)`. La caja de colisión es `(x+8, y+16, 48, 32)` y bloquea al granjero.
+
+**Diálogo diario** (`Characters/Dialogue/<NPC>`):
+- La primera vez se usa `Introduction`.
+- Si no, con `r = CreateDaySaveRandom(díasJugados·77, 2 + casaX·77, casaY·777)` (la casa en píxeles): se consume un `NextDouble`. Si llueve y `NextBool`, se usa `Characters/Dialogue/rainy:<NPC>`.
+- Si no, se prueba `tryToRetrieveDialogue("<estación>_")` y después `tryToRetrieveDialogue("")`, con `a = min(año, 2)` y este orden de claves:
+  1. `<p><día>` (solo el año 1).
+  2. `<p><día>_<a>` y `<p><día>_*`.
+  3. `<p><díaSemana><c>_<a>` o `<p><díaSemana><c>`, para c = 10, 8, … 2 si los corazones alcanzan.
+  4. `<p><díaSemana>` (o su versión `_<a>` si existe).
+- `#$e#` corta el texto: cada charla del día muestra el siguiente tramo. `#$b#` separa cajas.
+- `$h`/`$s`/`$u`/`$l`/`$a`/`$n` al final elige el retrato 1/2/3/4/5/n. `@` es el nombre del granjero y `^` separa la versión masculina de la femenina.
+- La primera charla del día da +20 puntos de amistad. Con el diálogo abierto el tiempo no corre.
+
+**Caja de diálogo con retrato:**
+- 1200×384, centrada, con `y = altoUI − 448`.
+- Marco con piezas de `Cursors` (fondo `(306,320,16,16)` estirado, bordes y esquinas ×4).
+- Columna de retrato desde `x + 1200 − 444`, marco `(583,411,115,97)` ×4, y retrato `Portraits/<NPC>` (64×64, índice por emoción) en `(retX+92, y+16+…)`.
+- Nombre centrado debajo y texto en `(x+8, y+8)` con ancho 716.
+- Se tipea a 1 carácter cada 30 ms. Acción o clic completa el texto; con el texto completo, pasa a la caja siguiente.
+
+**SpriteText** (`LooseSprites/font_bold`, zoom 3):
+- Glifo `c`: rectángulo `((c−32)·8 mod 128, ⌊(c−32)·8/128⌋·16, 8, 16)`.
+- Avance `8·3 + ajuste(siguiente)·3` más `ajuste(c)·3`. Ajustes: `,` `.` −2; `! i j l ¡ ı…` −1; `^` −8; `$` +1.
+- Línea de 18·3 px. Corta antes de la palabra que no entra. Las mayúsculas suben 3 px.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
