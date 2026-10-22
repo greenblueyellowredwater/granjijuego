@@ -9,6 +9,9 @@ import type { WeatherData } from "./world/weather.ts";
 import type { ItemData } from "./world/items.ts";
 import type { CropData } from "./world/crops.ts";
 import type { BuildingData } from "./world/buildings.ts";
+import { NpcManager, type CharacterData } from "./world/npcs.ts";
+import type { GraphWarp } from "./world/npc-sim.ts";
+import { resolveMapPath } from "./scenes/World.ts";
 import type { ClothingData } from "./world/farmer-appearance.ts";
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -69,7 +72,7 @@ async function boot() {
   }
 
   const load = async (key: string) => (await fetch(contentUrl(key, "json"))).json();
-  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon, contexts, festivalDates, passiveFestivals, calendar, tools, weapons, crops, buildings, buildingStrings] = (await Promise.all([
+  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon, contexts, festivalDates, passiveFestivals, calendar, tools, weapons, crops, buildings, buildingStrings, characters, warps] = (await Promise.all([
     load("Data/Locations"),
     load("Data/WildTrees"),
     load("Data/Objects"),
@@ -88,6 +91,8 @@ async function boot() {
     load("Data/Crops"),
     load("Data/Buildings"),
     load("Strings/Buildings"),
+    load("Data/Characters"),
+    load("generated/warps").catch(() => ({})),
   ])) as [
     LocationsData,
     TerrainData["wildTrees"],
@@ -107,6 +112,8 @@ async function boot() {
     Record<string, CropData>,
     Record<string, BuildingData>,
     Record<string, string>,
+    Record<string, CharacterData>,
+    Record<string, GraphWarp[]>,
   ];
   const terrain: TerrainData = {
     wildTrees,
@@ -137,6 +144,28 @@ async function boot() {
     store.reset();
     location.reload();
   };
+  const npcNames = Object.keys(characters).filter((n) => `Characters/${n}` in manifest.textures && characters[n].Home?.length);
+  const schedules: Record<string, Record<string, string>> = {};
+  await Promise.all(npcNames.map(async (n) => (schedules[n] = await load(`Characters/schedules/${n}`).catch(() => undefined))));
+  const mapToLocation = new Map<string, string>();
+  for (const name of Object.keys(locations)) mapToLocation.set(resolveMapPath(locations, name), name);
+  const graph: Record<string, GraphWarp[]> = {};
+  for (const [mapPath, list] of Object.entries(warps)) graph[mapToLocation.get(mapPath) ?? mapPath.replace(/^Maps\//, "")] = list;
+  const npcs = new NpcManager(graph, (loc) => resolveMapPath(locations, loc), async (path) => {
+    try {
+      return (await fetch(contentUrl(path, "tmj"))).json();
+    } catch {
+      return null;
+    }
+  });
+  const setupNpcs = () =>
+    npcs.setupDay(
+      Object.fromEntries(npcNames.map((n) => [n, characters[n]])),
+      schedules,
+      { season: state.season, dayOfMonth: state.dayOfMonth, year: state.year, raining: state.weather === "Rain" || state.weather === "Storm", mail: new Set(state.flags) },
+      () => true,
+    );
+  setupNpcs();
   const x = params.get("x"), y = params.get("y");
   const seasonOverride = params.get("season");
   if (seasonOverride && SEASONS.includes(seasonOverride as Season)) state.season = seasonOverride as Season;
@@ -154,6 +183,8 @@ async function boot() {
     greenRainDays: calendar.greenRainDays ?? [],
     crops,
     buildings,
+    npcs,
+    setupNpcs,
     items: {
       tools,
       weapons,

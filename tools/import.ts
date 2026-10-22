@@ -6,6 +6,7 @@ import { generateGameDataSchemes, type GeneratedSchemes } from "./clr/gamedata-s
 import { schemesToDts } from "./clr/dts.ts";
 import { Metadata } from "./clr/metadata.ts";
 import { readInlineIntArrays, readStaticIntArrays } from "./clr/static-arrays.ts";
+import { warpGraph } from "./warp-graph.ts";
 import type { Converted } from "./convert.ts";
 
 const out = console.log.bind(console);
@@ -125,6 +126,8 @@ export async function importContent(gameDir: string, outDir: string, typesFile: 
   for (const list of [manifest.maps, manifest.data, manifest.fonts, manifest.skipped]) list.sort();
   manifest.textures = Object.fromEntries(Object.entries(manifest.textures).sort(([a], [b]) => a.localeCompare(b)));
   writeFileSync(join(outDir, "manifest.json"), JSON.stringify(manifest, null, 1));
+  writeFileSync(join(generatedDir, "warps.json"), JSON.stringify(warpGraph(join(outDir, "Maps"))));
+  out(`Grafo de warps → ${join(generatedDir, "warps.json")}`);
   out(
     `Texturas ${Object.keys(manifest.textures).length} · mapas ${manifest.maps.length} · datos ${manifest.data.length} · fuentes ${manifest.fonts.length} · omitidos ${manifest.skipped.length} · errores ${manifest.errors.length} · ${((performance.now() - started) / 1000).toFixed(1)} s`,
   );

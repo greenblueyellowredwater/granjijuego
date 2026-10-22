@@ -37,6 +37,8 @@ import { dayUpdateLocations } from "../world/day.ts";
 import { debrisDrops, debrisKind, spawnDebris, stepDebris, toolBreaks, type ItemDebris } from "../world/debris.ts";
 import { itemSprite } from "../world/items.ts";
 import { FALL_DROPS, hitTree, TreeMotion, type TreeEntity } from "../world/trees.ts";
+import type { NpcManager } from "../world/npcs.ts";
+import { npcFrame } from "../world/npc-sim.ts";
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canTill, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
@@ -134,6 +136,8 @@ export interface WorldData {
   items: ItemData;
   crops: Record<string, CropData>;
   buildings: Record<string, BuildingData>;
+  npcs: NpcManager;
+  setupNpcs: () => void;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
 }
@@ -177,6 +181,8 @@ export class World extends Phaser.Scene {
   private drops: { d: ItemDebris; img: Phaser.GameObjects.Image | null; shadow: Phaser.GameObjects.Image | null }[] = [];
   private fadingTrees: { rect: Rect; alpha: number; images: Phaser.GameObjects.Image[]; entity?: Entity }[] = [];
   private treeMotions = new Map<TreeEntity, TreeMotion>();
+  private npcImages = new Map<string, { sprite: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image }>();
+  private staticSolids: Rect[] = [];
   private water: { grid: WaterGrid; state: WaterState; tint: number; alpha: number; pool: Phaser.GameObjects.Image[] } | null = null;
   private ticks = 0;
   private lightSources: LightSource[] = [];
@@ -216,6 +222,8 @@ export class World extends Phaser.Scene {
     this.fadingTrees = [];
     this.entityImages = new Map();
     this.treeMotions = new Map();
+    this.npcImages = new Map();
+    this.staticSolids = [];
     this.drops = [];
     this.water = null;
     this.ticks = 0;
@@ -292,6 +300,7 @@ export class World extends Phaser.Scene {
       if (t) textures.add(t);
     }
     const { manifest } = this.params;
+    for (const n of this.params.npcs.npcs) textures.add(`Characters/${n.name}`);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
     }
@@ -320,7 +329,8 @@ export class World extends Phaser.Scene {
     if (changed) store.save(state);
     this.entities = entities;
     this.bed = (entities.find((e) => e.kind === "bed") as Extract<Entity, { kind: "bed" }> | undefined) ?? null;
-    this.location.setSolids(entities.flatMap((e) => this.solidsOf(e)));
+    this.staticSolids = entities.flatMap((e) => this.solidsOf(e));
+    this.location.setSolids(this.staticSolids);
     const grass: GrassContext = {
       uniqueId: state.uniqueId,
       daysPlayed: state.daysPlayed,
@@ -342,7 +352,43 @@ export class World extends Phaser.Scene {
     if (i >= 0) this.entities.splice(i, 1);
     for (const img of this.entityImages.get(e) ?? []) img.destroy();
     this.entityImages.delete(e);
-    this.location.setSolids(this.entities.flatMap((x) => this.solidsOf(x)));
+    this.staticSolids = this.entities.flatMap((x) => this.solidsOf(x));
+    this.location.setSolids(this.staticSolids);
+  }
+
+  private updateNpcs() {
+    const { npcs, clock } = this.params;
+    if (this.timePasses) npcs.tick(clock.time, TICK_MS);
+    const here = npcs.in(this.location.name);
+    this.location.setSolids([...this.staticSolids, ...here.map((n) => ({ x: n.x + 8, y: n.y + 16, w: 48, h: 32 }))]);
+  }
+
+  private drawNpcs() {
+    const here = new Set(this.params.npcs.in(this.location.name));
+    for (const [name, imgs] of this.npcImages) {
+      if ([...here].some((n) => n.name === name)) continue;
+      imgs.sprite.setVisible(false);
+      imgs.shadow.setVisible(false);
+    }
+    for (const n of here) {
+      const texture = `Characters/${n.name}`;
+      if (!this.textures.exists(texture)) continue;
+      const frame = npcFrame(n);
+      const tex = this.textures.get(texture);
+      const fname = `npc:${frame}`;
+      if (!tex.has(fname)) tex.add(fname, 0, (frame % 4) * 16, Math.floor(frame / 4) * 32, 16, 32);
+      let imgs = this.npcImages.get(n.name);
+      if (!imgs) {
+        imgs = {
+          sprite: this.add.image(0, 0, texture, fname).setOrigin(0.5, 0.75).setScale(PIXEL_SCALE),
+          shadow: this.add.image(0, 0, SHADOW_TEXTURE).setScale(PIXEL_SCALE),
+        };
+        this.npcImages.set(n.name, imgs);
+      }
+      const depth = this.rendered.spriteDepth((n.y + 32) / 10000);
+      imgs.sprite.setTexture(texture, fname).setPosition(n.x + 32, n.y + 16).setDepth(depth).setVisible(true);
+      imgs.shadow.setPosition(n.x + 32, n.y + 44).setDepth(depth - 1e-6).setVisible(true);
+    }
   }
 
   private dropItems(ids: string[], tx: number, ty: number) {
@@ -387,7 +433,7 @@ export class World extends Phaser.Scene {
         const side = motion.shakeLeft ? -4 : 4;
         for (const d of FALL_DROPS) this.dropItems(Array(d.count).fill(d.id), tree.x + side, tree.y);
         this.treeMotions.delete(tree);
-        this.location.setSolids(this.entities.flatMap((x) => this.solidsOf(x)));
+        this.staticSolids = this.entities.flatMap((x) => this.solidsOf(x));
       } else if (!motion.falling && motion.maxShake === 0 && motion.rotation === 0) this.treeMotions.delete(tree);
     }
   }
@@ -797,6 +843,7 @@ export class World extends Phaser.Scene {
     this.spawnTerrain();
     this.setupWater();
     this.setupLights();
+    this.params.npcs.provideLocation(this.location);
 
     const spawn = this.spawnTile(start);
     const pos = positionForTile(spawn.x, spawn.y);
@@ -963,6 +1010,7 @@ export class World extends Phaser.Scene {
       state.weather = weather.today;
       state.weatherForTomorrow = weather.tomorrow;
       dayUpdateLocations(state, this.params.crops, weatherFlags(state.weather).raining);
+      this.params.setupNpcs();
       state.stamina = state.maxStamina;
       clock.time = 600;
       clock.interval = 0;
@@ -976,6 +1024,7 @@ export class World extends Phaser.Scene {
     const pressed = this.pressed();
     if (!this.canMove) pressed.clear();
     this.tickTool();
+    this.updateNpcs();
     this.updateDrops();
     this.tickTrees();
     const before = { x: this.body.x, y: this.body.y };
@@ -1069,6 +1118,7 @@ export class World extends Phaser.Scene {
     this.drawWater();
     this.redrawDirt();
     this.drawDrops();
+    this.drawNpcs();
     this.drawTemps(delta);
     this.drawLightingAndHud(time);
 
