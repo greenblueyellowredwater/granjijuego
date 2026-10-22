@@ -709,8 +709,19 @@ Emoción por defecto `$h` (encanta, gusta, té) o `$s` (disgusta, odia), si el t
   - `GiftsThisWeek` vuelve a 0.
 - Charla diaria: +20 la primera vez del día.
 
+**Emotes** (`Character.doEmote` / `updateEmote` / `NPC.DrawEmote`):
+- Al regalar: encanta → 20 (corazón), odia → 12, té → 56.
+- Secuencia:
+  1. Abre por los cuadros 0..3 cada 20 ms.
+  2. Salta al índice del emote y cicla 4 cuadros cada 250 ms.
+  3. Cierra de 3 a 0 cada 20 ms.
+- Solo avanza con el mundo activo (no con un menú abierto).
+- Fuente `TileSheets/emotes`: cuadro `f` en `(16f mod ancho, ⌊16f/ancho⌋·16)`, 16×16, escala 4.
+- Posición: `(x + EmoteOffset.x + (anchoSprite/2 − 8)·4, y + EmoteOffset.y − (altoSprite+3)·4)`. Se suman +32 si es niño o +10 si es mujer.
+- Se dibuja sobre todas las capas del mapa (después de AlwaysFront).
+
 Aproximaciones:
-- Sin emotes (corazón 20, enojo 12, té 56) ni la animación del granjero al entregar.
+- Sin la animación del granjero al entregar.
 - Sin celos de cónyuge ni misiones de entrega.
 - Sin regalo por encima del mostrador: hace falta tener al NPC enfrente.
 

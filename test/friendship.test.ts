@@ -140,3 +140,21 @@ describe("reacción al regalo", () => {
     expect(giftReaction({ ...base, birthday: true, taste: GiftTaste.Like, dialogue: {}, nextBool: () => true })?.text).toBe("Is it my birthday?$h");
   });
 });
+
+describe("emotes", () => {
+  it("abre, cicla 4 cuadros cada 250 ms y se cierra", async () => {
+    const { startEmote, updateEmote, emoteSourceRect, npcEmotePosition } = await import("../src/world/emotes.ts");
+    let e = startEmote(20) as ReturnType<typeof startEmote> | null;
+    const frames: number[] = [];
+    let ms = 0;
+    while (e && ms < 2000) {
+      e = updateEmote(e, 16);
+      ms += 16;
+      if (e && frames[frames.length - 1] !== e.frame) frames.push(e.frame);
+    }
+    expect(frames).toEqual([0, 1, 2, 3, 20, 21, 22, 23, 3, 2, 1, 0]);
+    expect(e).toBeNull();
+    expect(emoteSourceRect(20)).toEqual({ sx: 0, sy: 80, sw: 16, sh: 16 });
+    expect(npcEmotePosition(100, 200, null, 16, 32, true, false)).toEqual({ x: 100, y: 70 });
+  });
+});

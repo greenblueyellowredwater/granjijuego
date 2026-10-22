@@ -1,3 +1,4 @@
+import type { Emote } from "./emotes.ts";
 import type { ScheduleEntry } from "./npc-schedule.ts";
 import type { Location } from "./location.ts";
 
@@ -91,6 +92,7 @@ export interface NpcState {
   frame: number;
   frameTimer: number;
   endFacing: number;
+  emote?: Emote | null;
 }
 
 const ROW: Record<number, number> = { 0: 2, 1: 1, 2: 0, 3: 3 };

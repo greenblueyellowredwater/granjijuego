@@ -38,7 +38,8 @@ import { debrisDrops, debrisKind, spawnDebris, stepDebris, toolBreaks, type Item
 import { itemSprite } from "../world/items.ts";
 import { FALL_DROPS, hitTree, TreeMotion, type TreeEntity } from "../world/trees.ts";
 import type { CharacterData, NpcManager } from "../world/npcs.ts";
-import { canBeGivenAsGift, canReceiveGiftNow, changeFriendship, giftFriendshipChange, giftReaction, giftTaste, objectContextTags, recordGift, resetFriendshipsForNewDay, totalDays, type Friendship } from "../world/friendship.ts";
+import { EMOTE_TEXTURE, emoteSourceRect, npcEmotePosition, startEmote, updateEmote } from "../world/emotes.ts";
+import { canBeGivenAsGift, canReceiveGiftNow, changeFriendship, giftEmote, giftFriendshipChange, giftReaction, giftTaste, objectContextTags, recordGift, resetFriendshipsForNewDay, totalDays, type Friendship } from "../world/friendship.ts";
 import { npcFrame, type NpcState } from "../world/npc-sim.ts";
 import { DialogueBox } from "../render/dialogue-box.ts";
 import { dailyDialogue, dialogueChunks, parseDialogue } from "../world/dialogue.ts";
@@ -193,7 +194,7 @@ export class World extends Phaser.Scene {
   private drops: { d: ItemDebris; img: Phaser.GameObjects.Image | null; shadow: Phaser.GameObjects.Image | null }[] = [];
   private fadingTrees: { rect: Rect; alpha: number; images: Phaser.GameObjects.Image[]; entity?: Entity }[] = [];
   private treeMotions = new Map<TreeEntity, TreeMotion>();
-  private npcImages = new Map<string, { sprite: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image }>();
+  private npcImages = new Map<string, { sprite: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image; emote: Phaser.GameObjects.Image }>();
   private staticSolids: Rect[] = [];
   private dialogueBox: DialogueBox | null = null;
   private shop: ShopMenu | null = null;
@@ -319,6 +320,7 @@ export class World extends Phaser.Scene {
       textures.add(`Portraits/${n.name}`);
     }
     textures.add(SPRITE_TEXT_TEXTURE);
+    textures.add(EMOTE_TEXTURE);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
     }
@@ -377,6 +379,7 @@ export class World extends Phaser.Scene {
   private updateNpcs() {
     const { npcs, clock } = this.params;
     if (this.timePasses) npcs.tick(clock.time, TICK_MS);
+    if (this.timePasses) for (const n of npcs.npcs) if (n.emote) n.emote = updateEmote(n.emote, TICK_MS);
     const here = npcs.in(this.location.name);
     this.location.setSolids([...this.staticSolids, ...here.map((n) => ({ x: n.x + 8, y: n.y + 16, w: 48, h: 32 }))]);
   }
@@ -387,6 +390,7 @@ export class World extends Phaser.Scene {
       if ([...here].some((n) => n.name === name)) continue;
       imgs.sprite.setVisible(false);
       imgs.shadow.setVisible(false);
+      imgs.emote.setVisible(false);
     }
     for (const n of here) {
       const texture = `Characters/${n.name}`;
@@ -400,12 +404,22 @@ export class World extends Phaser.Scene {
         imgs = {
           sprite: this.add.image(0, 0, texture, fname).setOrigin(0.5, 0.75).setScale(PIXEL_SCALE),
           shadow: this.add.image(0, 0, SHADOW_TEXTURE).setScale(PIXEL_SCALE),
+          emote: this.add.image(0, 0, SHADOW_TEXTURE).setOrigin(0, 0).setScale(PIXEL_SCALE).setVisible(false),
         };
         this.npcImages.set(n.name, imgs);
       }
       const depth = this.rendered.spriteDepth((n.y + 32) / 10000);
       imgs.sprite.setTexture(texture, fname).setPosition(n.x + 32, n.y + 16).setDepth(depth).setVisible(true);
       imgs.shadow.setPosition(n.x + 32, n.y + 44).setDepth(depth - 1e-6).setVisible(true);
+      if (n.emote && this.textures.exists(EMOTE_TEXTURE)) {
+        const r = emoteSourceRect(n.emote.frame, this.textures.get(EMOTE_TEXTURE).source[0].width);
+        const ename = `emote:${n.emote.frame}`;
+        const etex = this.textures.get(EMOTE_TEXTURE);
+        if (!etex.has(ename)) etex.add(ename, 0, r.sx, r.sy, r.sw, r.sh);
+        const data = this.params.characters[n.name];
+        const p = npcEmotePosition(n.x, n.y, (data as { EmoteOffset?: { x: number; y: number } } | undefined)?.EmoteOffset, 16, 32, Number((data as { Gender?: unknown })?.Gender) === 1, Number((data as { Age?: unknown })?.Age) === 2);
+        imgs.emote.setTexture(EMOTE_TEXTURE, ename).setPosition(p.x, p.y).setDepth(DEPTH.alwaysFront + 1 + (n.y + 32) / 1e7).setVisible(true);
+      } else imgs.emote.setVisible(false);
     }
   }
 
@@ -1039,6 +1053,8 @@ export class World extends Phaser.Scene {
     });
     consumeOne(state.inventory, state.currentToolIndex);
     this.faceFarmer(n);
+    const emote = giftEmote(taste);
+    if (emote !== null) n.emote = startEmote(emote);
     if (reaction) {
       const text = reaction.emotion && !/\$[a-z0-9]+\s*$/.test(reaction.text) ? `${reaction.text}${reaction.emotion}` : reaction.text;
       const pages = parseDialogue(text, state.farmerName, this.appearance.isMale);
