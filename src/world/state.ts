@@ -26,6 +26,8 @@ export interface GameState {
   farmerName: string;
   farmName: string;
   totalEarned: number;
+  experience: number[];
+  newLevels: [number, number][];
   appearance?: Appearance;
   locations: Record<string, { entities: Entity[] }>;
 }
@@ -52,6 +54,8 @@ export function newGameState(random = Math.random): GameState {
     farmerName: "Granjero",
     farmName: "Valle",
     totalEarned: 0,
+    experience: [0, 0, 0, 0, 0, 0],
+    newLevels: [],
     appearance: DEFAULT_APPEARANCE,
     locations: {},
   };
@@ -76,6 +80,8 @@ export function withDefaults(state: GameState): GameState {
     farmerName: state.farmerName ?? "Granjero",
     farmName: state.farmName ?? "Valle",
     totalEarned: state.totalEarned ?? 0,
+    experience: state.experience ?? [0, 0, 0, 0, 0, 0],
+    newLevels: state.newLevels ?? [],
   };
 }
 

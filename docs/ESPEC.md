@@ -774,7 +774,7 @@ Aproximaciones:
 **Tienda**: su inventario usa el mismo `InventoryMenu`, sin `playerInventory` y con `showGrayedOutSlots`.
 
 Aproximaciones:
-- Funcionan las pestañas de inventario, social (spec S14) y salir.
+- Funcionan las pestañas de inventario, habilidades (spec S15), social (spec S14) y salir.
 - Sin mini-retrato en la pestaña de habilidades y sin botón de ordenar funcional.
 - Sin la capa azul nocturna sobre el granjero, sin animación de la tapa del tacho y sin tirar ítems fuera del menú.
 
@@ -847,6 +847,64 @@ Corazones = `puntos/250`.
   - Se mueve con la rueda o las flechas.
 
 Aproximaciones: sin entrada del granjero propio ni de otros jugadores, sin estados de pareja o casamiento, sin perfil al hacer clic y sin tooltip de cumpleaños.
+
+## Spec S15: habilidades y experiencia
+
+**Experiencia** (`Farmer.gainExperience`):
+- Habilidades: 0 cultivo, 1 pesca, 2 recolección, 3 minería, 4 combate, 5 suerte. La suerte nunca suma.
+- Umbrales por nivel: 100, 380, 770, 1300, 2150, 3300, 4800, 6900, 10000, 15000.
+- `checkForLevelGain(viejo, nuevo)` devuelve el nivel más alto cruzado. Cada nivel nuevo se agrega a `newLevels` como (habilidad, nivel).
+
+**Fuentes de experiencia implementadas**:
+
+| Acción | Habilidad | Experiencia |
+| --- | --- | --- |
+| Cosecha (`Crop.harvest`) | Cultivo | `round(16·ln(0,018·precio+1))` (chirivía: 8) |
+| Árbol que cae (`Tree.performTreeFall`) | Recolección | 14 |
+| Tocón destruido | Recolección | 2 |
+| Rama rota con hacha | Recolección | 1 |
+| Piedra rota (`breakStone`) | Minería | 1 |
+
+**Efectos del nivel**:
+- Energía por uso de herramienta: `2 − nivel·0,1`. Azada y regadera usan cultivo, hacha usa recolección y pico usa minería.
+- Calidad de cosecha según el nivel de cultivo (spec S8).
+
+**Nivel del granjero**: `(suma de los 6 niveles)/2`. Título (`Farmer.getTitle`, StringsFromCSFiles):
+
+| Nivel | Clave |
+| --- | --- |
+| < 3 | Farmer.cs.2032 |
+| 3–4 | 2031 |
+| 5–6 | 2030 |
+| 7–8 | 2029 |
+| 9–10 | 2028 |
+| 11–12 | 2027 |
+| 13–14 | 2026 |
+| 15–16 | 2025 |
+| 17–18 | 2023 (hombre) / 2024 (mujer) |
+| 19–20 | 2022 |
+| 21–22 | 2021 |
+| 23–24 | 2020 |
+| 25–26 | 2019 |
+| 27–28 | 2018 |
+| 29 | 2017 |
+| ≥ 30 | 2016 |
+
+**SkillsPage** (base `bx = x+384`, `by = y+128`, filas cada 68):
+- Orden de filas: cultivo, minería, recolección, pesca y combate.
+  - Ícono `Cursors` 10×10: (10,428), (30,428), (60,428), (20,428) y (120,428).
+  - El ícono va en `(bx−52, by−4)` con sombra en `(bx−56, by)` en negro a 0,3.
+  - El nombre (`SkillsPage.cs.11604..8`) va alineado a la derecha en `bx−60`.
+- Nivel i en `bx + i·36 + 24·⌊i/5⌋`:
+  - Normal: `(129|137, 338, 8, 9)`, con sombra (−4, +4) y alfa 0,65 si no se alcanzó.
+  - Hito (niveles 5 y 10): `(145, 338, 14, 9)` vacío a 0,65 con sombra. Alcanzado: `(159, 338, 14, 9)` en x−4, sin sombra.
+- Número de nivel con `NumberSprite`: dígitos `(512 + d·8 mod 48, 128 + ⌊d·8/48⌋·8, 8, 8)` ×4 con origen (4,4), de derecha a izquierda cada 28 px. Va en SandyBrown (0,75 si es 0) con sombra negra a 0,35.
+- Retrato:
+  - Fondo día/noche en `(x+56, y+116)` y granjero en `(x+88, y+148)`.
+  - Nombre y título en smallFont, centrados en `x+120`, a `y+311` y `y+341`.
+  - Línea `(214,143,84)` de 4 px en `y + 96 + alto/2 + 21`.
+
+Aproximaciones: sin `LevelUpMenu` ni profesiones al final del día (los niveles nuevos quedan en `newLevels`), sin mini-retrato en la pestaña y sin experiencia de pesca, combate, forraje ni animales.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

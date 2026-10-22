@@ -9,7 +9,7 @@ import { buildWaterGrid, WATER_TEXTURE, waterColor, waterPieces, WaterState, typ
 import { DEPTH } from "../render/tilemap.ts";
 import { FarmerSprite, farmerTextureKeys } from "../render/farmer.ts";
 import { DEFAULT_APPEARANCE, pantsInfo, shirtInfo, type ClothingData } from "../world/farmer-appearance.ts";
-import { GameMenu, gameMenuLayout } from "../render/game-menu.ts";
+import { GameMenu } from "../render/game-menu.ts";
 import { sortSocialEntries, type SocialEntry } from "../render/social-page.ts";
 import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, parseText, TOOL_CATEGORY_COLOR, type TooltipContent } from "../render/tooltip.ts";
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
@@ -54,6 +54,7 @@ import { objectBasePrice, shopStock, type ShopData } from "../world/shops.ts";
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canTill, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
+import { FARMING, farmerTitleKey, FORAGING, gainExperience, harvestExperience, levelForExperience, MINING } from "../world/skills.ts";
 import { checkConditions, daySaveRandom, type GsqState } from "../world/gsq.ts";
 import {
   bedSleepTile,
@@ -447,8 +448,12 @@ export class World extends Phaser.Scene {
     const motion = this.treeMotions.get(tree) ?? new TreeMotion();
     this.treeMotions.set(tree, motion);
     if (hit.result === "shake") motion.shake(fromRight, tree.stage >= 5);
-    if (hit.result === "fall") motion.fall(fromRight);
+    if (hit.result === "fall") {
+      motion.fall(fromRight);
+      gainExperience(this.params.state, FORAGING, 14);
+    }
     if (hit.result === "destroyed") {
+      gainExperience(this.params.state, FORAGING, 2);
       this.treeMotions.delete(tree);
       this.removeEntity(tree);
       this.fadingTrees = this.fadingTrees.filter((f) => f.entity !== tree);
@@ -488,6 +493,8 @@ export class World extends Phaser.Scene {
     const kind = debrisKind(data?.Name, data?.Category);
     if (!toolBreaks(kind, tool)) return false;
     this.removeEntity(obj);
+    if (kind === "twig") gainExperience(this.params.state, FORAGING, 1);
+    if (kind === "stone") gainExperience(this.params.state, MINING, 1);
     this.dropItems(debrisDrops(kind), tx, ty);
     if (kind !== "weeds") this.temps.push(animationSprite(12, tx * TILE, ty * TILE, 8, Math.random() < 0.5, 50));
     return true;
@@ -666,17 +673,24 @@ export class World extends Phaser.Scene {
     return true;
   }
 
+  private toolSkillLevel() {
+    const kind = this.tool?.kind;
+    const skill = kind === "axe" ? FORAGING : kind === "pickaxe" ? MINING : FARMING;
+    return levelForExperience(this.params.state.experience[skill] ?? 0);
+  }
+
   private tryHarvest(tx: number, ty: number) {
     const dirt = this.dirtAt(tx, ty);
     if (!dirt?.crop || !isHarvestable(dirt.crop)) return false;
     const { state } = this.params;
     const data = this.params.crops[dirt.crop.seed];
-    const { quality, stack } = harvestQuality(tx, ty, state.daysPlayed, state.uniqueId, 0, 0, data);
+    const { quality, stack } = harvestQuality(tx, ty, state.daysPlayed, state.uniqueId, levelForExperience(state.experience[FARMING] ?? 0), 0, data);
     const rest = addItem(state.inventory, { id: `(O)${dirt.crop.harvest}`, stack, quality });
     if (rest) {
       this.message = this.params.text.inventoryFull;
       return true;
     }
+    gainExperience(state, FARMING, harvestExperience((this.params.items.objects[dirt.crop.harvest] as { Price?: number } | undefined)?.Price ?? 0));
     dirt.crop = afterHarvest(dirt.crop, data);
     if (!dirt.crop) {
       this.temps.push(animationSprite(17, tx * TILE, ty * TILE, 7, Math.random() < 0.5, 125));
@@ -721,11 +735,11 @@ export class World extends Phaser.Scene {
       return;
     }
     if (this.hitTreeAt(tx, ty, this.tool.kind) || this.hitObjectAt(tx, ty, this.tool.kind)) {
-      state.stamina -= toolStaminaCost(1, 0);
+      state.stamina -= toolStaminaCost(1, this.toolSkillLevel());
       return;
     }
     if (this.tool.kind === "hoe") {
-      state.stamina -= toolStaminaCost(1, 0);
+      state.stamina -= toolStaminaCost(1, this.toolSkillLevel());
       if (canTill(this.location, tx, ty, (x, y) => this.occupied(x, y))) {
         this.entities.push({ kind: "hoeDirt", x: tx, y: ty, watered: false });
         this.temps.push(animationSprite(12, tx * TILE, ty * TILE, 8, Math.random() < 0.5, 50));
@@ -737,14 +751,14 @@ export class World extends Phaser.Scene {
         return;
       }
       if (state.waterLeft <= 0) return;
-      state.stamina -= toolStaminaCost(1, 0);
+      state.stamina -= toolStaminaCost(1, this.toolSkillLevel());
       state.waterLeft--;
       const dirt = this.dirtAt(tx, ty);
       if (dirt && !dirt.watered) {
         dirt.watered = true;
         this.dirtDirty = true;
       }
-    } else state.stamina -= toolStaminaCost(1, 0);
+    } else state.stamina -= toolStaminaCost(1, this.toolSkillLevel());
   }
 
   private tickTool() {
@@ -1066,7 +1080,7 @@ export class World extends Phaser.Scene {
     if (!hit) return;
     if (hit.kind === "close") this.closeGameMenu();
     else if (hit.kind === "tab") {
-      if (hit.name === "inventory" || hit.name === "social") menu.tab = hit.name;
+      if (hit.name === "inventory" || hit.name === "social" || hit.name === "skills") menu.tab = hit.name;
       if (hit.name === "exit") this.closeGameMenu();
     } else if (hit.kind === "up" || hit.kind === "down") menu.social.scrollBy(hit.kind === "up" ? -1 : 1, this.socialEntries().length);
     else if (hit.kind === "trash") menu.held = null;
@@ -1107,10 +1121,9 @@ export class World extends Phaser.Scene {
       shirt: { index: shirt.spriteIndex, color: rgb(shirt.color) },
       pants: { index: pants.spriteIndex, color: rgb(pants.color) },
       strings: { farmName: ui.Inventory_FarmName ?? "{0} Farm", funds: ui.Inventory_CurrentFunds ?? "Current Funds: {0}g", earnings: ui.Inventory_TotalEarnings ?? "Total Earnings: {0}g" },
-    }, pointer, this.tooltipFor(menu.open ? state.inventory[menu.hoveredSlot(w, h, pointer.x, pointer.y)] ?? null : null), { energy: ui.ItemHover_Energy ?? "{0} Energy", health: ui.ItemHover_Health ?? "{0} Health" }, menu.open && menu.tab === "social" ? { entries: this.socialEntries(), strings: cs } : undefined);
-    if (menu.open && menu.tab === "inventory") {
-      const l = gameMenuLayout(w, h);
-      this.menuFarmer?.update({ frame: 0, ms: 0, flip: false, offsetY: 0 } as unknown as Parameters<FarmerSprite["update"]>[0], Facing.Down, l.farmer.x, l.farmer.y, 0, () => HUD_DEPTH + 41);
+    }, pointer, this.tooltipFor(menu.open ? state.inventory[menu.hoveredSlot(w, h, pointer.x, pointer.y)] ?? null : null), { energy: ui.ItemHover_Energy ?? "{0} Energy", health: ui.ItemHover_Health ?? "{0} Health" }, { entries: menu.open && menu.tab === "social" ? this.socialEntries() : [], strings: cs }, { levels: state.experience.map((x) => levelForExperience(x)), title: cs[farmerTitleKey(state.experience.map((x) => levelForExperience(x)), this.appearance.isMale)] ?? "" });
+    if (menu.open && menu.tab !== "social" && menu.farmerAt) {
+      this.menuFarmer?.update({ frame: 0, ms: 0, flip: false, offsetY: 0 } as unknown as Parameters<FarmerSprite["update"]>[0], Facing.Down, menu.farmerAt.x, menu.farmerAt.y, 0, () => HUD_DEPTH + 41);
     } else this.menuFarmer?.hide();
   }
 

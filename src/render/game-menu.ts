@@ -6,6 +6,7 @@ import { drawItemInMenu } from "./toolbar.ts";
 import type { Item, ItemData } from "../world/items.ts";
 import { drawTooltip, type TooltipContent } from "./tooltip.ts";
 import { SocialPage, socialLayout, type SocialEntry } from "./social-page.ts";
+import { drawSkillsPage } from "./skills-page.ts";
 
 const CURSORS = "LooseSprites/Cursors";
 const CURSORS_16 = "LooseSprites/Cursors_1_6";
@@ -103,8 +104,9 @@ export class GameMenu {
     return inventorySlotAt(px, py, l.inventory.x, l.inventory.y, true);
   }
 
-  tab: "inventory" | "social" = "inventory";
+  tab: "inventory" | "skills" | "social" = "inventory";
   readonly social = new SocialPage();
+  farmerAt: { x: number; y: number } | null = null;
 
   hit(uiWidth: number, uiHeight: number, px: number, py: number) {
     const l = gameMenuLayout(uiWidth, uiHeight);
@@ -125,7 +127,7 @@ export class GameMenu {
     return null;
   }
 
-  draw(uiWidth: number, uiHeight: number, items: (Item | null)[], data: ItemData, current: number, maxItems: number, info: InventoryPageInfo, mouse: { x: number; y: number }, tooltip: TooltipContent | null = null, energyStrings = { energy: "{0} Energy", health: "{0} Health" }, social: { entries: SocialEntry[]; strings: Record<string, string> } = { entries: [], strings: {} }) {
+  draw(uiWidth: number, uiHeight: number, items: (Item | null)[], data: ItemData, current: number, maxItems: number, info: InventoryPageInfo, mouse: { x: number; y: number }, tooltip: TooltipContent | null = null, energyStrings = { energy: "{0} Energy", health: "{0} Health" }, social: { entries: SocialEntry[]; strings: Record<string, string> } = { entries: [], strings: {} }, skills: { levels: number[]; title: string } = { levels: [], title: "" }) {
     const b = this.back, f = this.front;
     b.begin();
     f.begin();
@@ -137,6 +139,17 @@ export class GameMenu {
         const icon = TAB_ICON[t.name];
         b.draw({ texture: icon.texture, sx: icon.sx, sy: icon.sy, sw: 16, sh: 16, x: t.x, y: t.y + (t.name === this.tab ? 8 : 0), scaleX: 4 });
       }
+      if (this.tab === "skills") {
+        if (this.small) {
+          const p = drawSkillsPage(b, f, { small: this.small, smallTexture: SMALL_FONT }, l.x, l.y, l.width, l.height, skills.levels, social.strings, { name: info.farmerName, title: skills.title });
+          b.draw({ texture: info.night ? "LooseSprites/nightbg" : "LooseSprites/daybg", sx: 0, sy: 0, sw: 128, sh: 192, x: p.portraitBg.x, y: p.portraitBg.y });
+          this.farmerAt = p.farmer;
+        }
+        f.draw({ texture: CURSORS, sx: 337, sy: 494, sw: 12, sh: 12, x: l.close.x, y: l.close.y, scaleX: 4 });
+        b.end();
+        f.end();
+        return;
+      }
       if (this.tab === "social") {
         if (this.font && this.small) this.social.draw(b, f, { dialogue: this.font, dialogueTexture: DIALOGUE_FONT, small: this.small, smallTexture: SMALL_FONT }, social.entries, l.x, l.y, l.width + 36, l.height, social.strings);
         f.draw({ texture: CURSORS, sx: 337, sy: 494, sw: 12, sh: 12, x: l.close.x, y: l.close.y, scaleX: 4 });
@@ -144,6 +157,7 @@ export class GameMenu {
         f.end();
         return;
       }
+      this.farmerAt = l.farmer;
       drawHorizontalPartition(b, l.x, l.width, l.partitionY);
       drawInventoryGrid(b, l.inventory.x, l.inventory.y, items, data, { playerInventory: true, showGrayedOutSlots: false, maxItems, currentToolIndex: current, tinyFont: this.tiny });
       const e = l.equipment;
