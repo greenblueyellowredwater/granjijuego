@@ -39,7 +39,7 @@ import {
   type FrameBehavior,
   type ToolKind,
 } from "../world/tools.ts";
-import { addItem, consumeOne, maximumStack } from "../world/items.ts";
+import { addItem, consumeOne, isPlaceableObject, maximumStack } from "../world/items.ts";
 
 const MAX_ITEMS = 12;
 import { afterHarvest, cropDrawMath, harvestQuality, isHarvestable, isInSeason, newCrop, type CropData } from "../world/crops.ts";
@@ -57,7 +57,7 @@ import { SPRITE_TEXT_TEXTURE } from "../render/spritetext.ts";
 import { ShopMenu } from "../render/shop-menu.ts";
 import { objectBasePrice, shopStock, type ShopData } from "../world/shops.ts";
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
-import { animationSprite, canTill, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
+import { animationSprite, canApplyFertilizer, canTill, fertilizerQualityLevel, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
 import { FARMING, farmerTitleKey, FORAGING, gainExperience, harvestExperience, levelForExperience, MINING } from "../world/skills.ts";
 import { checkConditions, daySaveRandom, type GsqState } from "../world/gsq.ts";
@@ -371,20 +371,23 @@ export class World extends Phaser.Scene {
     this.bed = (entities.find((e) => e.kind === "bed") as Extract<Entity, { kind: "bed" }> | undefined) ?? null;
     this.staticSolids = entities.flatMap((e) => this.solidsOf(e));
     this.location.setSolids(this.staticSolids);
+    for (const e of entities) this.addEntitySprites(e);
+  }
+
+  private addEntitySprites(e: Entity) {
+    const state = this.params.state;
     const grass: GrassContext = {
       uniqueId: state.uniqueId,
       daysPlayed: state.daysPlayed,
       outdoors: this.outdoors,
       hasFrontTile: (x, y) => this.location.tile("Front", x, y) !== 0,
     };
-    for (const e of entities) {
-      const ops = e.kind === "building" ? this.buildingOps(e) : drawOps(e, this.params.terrain, this.params.season, grass);
-      const all = ops.map((op) => ({ op, image: this.addDrawOp(op) }));
-      this.entityImages.set(e, all.map((x) => x.image).filter((i): i is Phaser.GameObjects.Image => i !== null));
-      const images = all.filter((x) => x.op.fades && x.image).map((x) => x.image!);
-      const rect = e.kind === "tree" ? treeFadeRect(e) : null;
-      if (rect && images.length) this.fadingTrees.push({ rect, alpha: 1, images, entity: e });
-    }
+    const ops = e.kind === "building" ? this.buildingOps(e) : drawOps(e, this.params.terrain, this.params.season, grass);
+    const all = ops.map((op) => ({ op, image: this.addDrawOp(op) }));
+    this.entityImages.set(e, all.map((x) => x.image).filter((i): i is Phaser.GameObjects.Image => i !== null));
+    const images = all.filter((x) => x.op.fades && x.image).map((x) => x.image!);
+    const rect = e.kind === "tree" ? treeFadeRect(e) : null;
+    if (rect && images.length) this.fadingTrees.push({ rect, alpha: 1, images, entity: e });
   }
 
   private removeEntity(e: Entity) {
@@ -444,7 +447,41 @@ export class World extends Phaser.Scene {
   }
 
   private dropItems(ids: string[], tx: number, ty: number) {
-    for (const id of ids) this.drops.push({ d: spawnDebris(`(O)${id}`, tx, ty), img: null, shadow: null });
+    for (const id of ids) this.drops.push({ d: spawnDebris(id.startsWith("(") ? id : `(O)${id}`, tx, ty), img: null, shadow: null });
+  }
+
+  private tryPlace(target?: { x: number; y: number }) {
+    const state = this.params.state;
+    const item = state.inventory[state.currentToolIndex];
+    if (!item) return false;
+    const { type, id } = parseId(item.id);
+    const obj = type === "O" ? (this.params.items.objects[id] as { Category?: number; Type?: string; Edibility?: number; ContextTags?: string[] } | undefined) : undefined;
+    if (type !== "BC" && !(obj && isPlaceableObject(obj))) return false;
+    const at = target ?? toolLocation(this.body.x, this.body.y, this.body.facing);
+    const tx = Math.floor(at.x / TILE), ty = Math.floor(at.y / TILE);
+    const b = farmerBox(this.body.x, this.body.y);
+    const c = { x: Math.floor((b.x + b.w / 2) / TILE), y: Math.floor((b.y + b.h / 2) / TILE) };
+    if (Math.abs(tx - c.x) > 1 || Math.abs(ty - c.y) > 1) return true;
+    if (obj?.Category === -19) {
+      const dirt = this.dirtAt(tx, ty);
+      if (dirt && canApplyFertilizer(dirt, item.id)) {
+        dirt.fertilizer = item.id;
+        consumeOne(state.inventory, state.currentToolIndex);
+        this.dirtDirty = true;
+      }
+      return true;
+    }
+    if (this.occupied(tx, ty) || this.location.blocksFarmer(tx, ty) || this.location.isWater(tx, ty)) return true;
+    const box = { x: tx * TILE, y: ty * TILE, w: TILE, h: TILE };
+    if (b.x < box.x + box.w && box.x < b.x + b.w && b.y < box.y + box.h && box.y < b.y + b.h) return true;
+    const entity: Entity = type === "BC" ? { kind: "bigCraftable", x: tx, y: ty, itemId: id } : { kind: "object", x: tx, y: ty, itemId: id, placed: true };
+    this.entities.push(entity);
+    this.addEntitySprites(entity);
+    consumeOne(state.inventory, state.currentToolIndex);
+    this.staticSolids = this.entities.flatMap((x) => this.solidsOf(x));
+    this.location.setSolids(this.staticSolids);
+    this.params.store.save(state);
+    return true;
   }
 
   private hitTreeAt(tx: number, ty: number, tool: string) {
@@ -495,6 +532,14 @@ export class World extends Phaser.Scene {
   }
 
   private hitObjectAt(tx: number, ty: number, tool: string) {
+    const placed = this.entities.find((e) => (e.kind === "bigCraftable" || (e.kind === "object" && e.placed)) && e.x === tx && e.y === ty) as Extract<Entity, { kind: "object" | "bigCraftable" }> | undefined;
+    if (placed) {
+      if (tool !== "pickaxe" && tool !== "axe") return false;
+      this.removeEntity(placed);
+      this.dropItems([placed.kind === "bigCraftable" ? `(BC)${placed.itemId}` : `(O)${placed.itemId}`], tx, ty);
+      this.params.store.save(this.params.state);
+      return true;
+    }
     const obj = this.entities.find((e): e is Extract<Entity, { kind: "object" }> => e.kind === "object" && e.x === tx && e.y === ty);
     if (!obj) return false;
     const data = this.params.items.objects[obj.itemId] as { Name?: string; Category?: number } | undefined;
@@ -692,7 +737,7 @@ export class World extends Phaser.Scene {
     if (!dirt?.crop || !isHarvestable(dirt.crop)) return false;
     const { state } = this.params;
     const data = this.params.crops[dirt.crop.seed];
-    const { quality, stack } = harvestQuality(tx, ty, state.daysPlayed, state.uniqueId, levelForExperience(state.experience[FARMING] ?? 0), 0, data);
+    const { quality, stack } = harvestQuality(tx, ty, state.daysPlayed, state.uniqueId, levelForExperience(state.experience[FARMING] ?? 0), fertilizerQualityLevel(dirt.fertilizer), data);
     const rest = addItem(state.inventory, { id: `(O)${dirt.crop.harvest}`, stack, quality });
     if (rest) {
       this.message = this.params.text.inventoryFull;
@@ -712,6 +757,7 @@ export class World extends Phaser.Scene {
     if (this.tool || this.question?.open || this.endingDay || this.warping) return;
     if (target && this.tryShip(Math.floor(target.x / TILE), Math.floor(target.y / TILE))) return;
     if (this.tryPlant(target)) return;
+    if (this.tryPlace(target)) return;
     const t = this.currentTool();
     if (!t) return;
     const state = this.params.state;

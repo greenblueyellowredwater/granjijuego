@@ -162,6 +162,7 @@ async function boot() {
   const toolStrings = (await load("Strings/Tools").catch(() => ({}))) as Record<string, string>;
   const weaponStrings = (await load("Strings/Weapons").catch(() => ({}))) as Record<string, string>;
   const bigCraftables = (await load("Data/BigCraftables").catch(() => ({}))) as ItemData["bigCraftables"];
+  terrain.bigCraftables = bigCraftables;
   const craftingRecipes = (await load("Data/CraftingRecipes").catch(() => ({}))) as Record<string, string>;
   const cookingRecipes = (await load("Data/CookingRecipes").catch(() => ({}))) as Record<string, string>;
   const bigCraftableStrings = (await load("Strings/BigCraftables").catch(() => ({}))) as Record<string, string>;

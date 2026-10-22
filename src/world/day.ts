@@ -1,3 +1,4 @@
+import { fertilizerWaterRetention } from "./farming.ts";
 import { cropNewDay, isInSeason, type CropData } from "./crops.ts";
 import type { GameState } from "./state.ts";
 import type { SeasonName } from "./terrain.ts";
@@ -19,7 +20,7 @@ export function dayUpdateLocations(state: GameState, crops: Record<string, CropD
         cropNewDay(e.crop, data, e.watered, season, outdoors);
         if (outdoors && season === "winter" && data && !isInSeason(data, season)) e.crop = null;
       }
-      e.watered = false;
+      if (!(random() < fertilizerWaterRetention(e.fertilizer))) e.watered = false;
     }
     const chance = dirtDecayChance(name);
     loc.entities = loc.entities.filter((e) => !(e.kind === "hoeDirt" && !e.crop && random() < chance));

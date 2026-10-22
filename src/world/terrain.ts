@@ -25,17 +25,19 @@ export interface TerrainData {
   bushTextureWidth: number;
   furniture?: Record<string, string>;
   furnitureTextureWidth?: number;
+  bigCraftables?: Record<string, { SpriteIndex: number; Texture?: string | null }>;
 }
 
 export type Entity =
   | { kind: "tree"; x: number; y: number; treeId: string; stage: number; flipped: boolean; health?: number; stump?: boolean }
   | { kind: "fruitTree"; x: number; y: number; treeId: string; stage: number }
-  | { kind: "object"; x: number; y: number; itemId: string }
+  | { kind: "object"; x: number; y: number; itemId: string; placed?: boolean }
+  | { kind: "bigCraftable"; x: number; y: number; itemId: string }
   | { kind: "clump"; x: number; y: number; index: number; w: number; h: number }
   | { kind: "bush"; x: number; y: number; size: number; flipped: boolean; townBush: boolean; drawShadow: boolean }
   | { kind: "grass"; x: number; y: number; grassType: number }
   | { kind: "bed"; x: number; y: number; itemId: string }
-  | { kind: "hoeDirt"; x: number; y: number; watered: boolean; crop?: CropState | null }
+  | { kind: "hoeDirt"; x: number; y: number; watered: boolean; crop?: CropState | null; fertilizer?: string }
   | { kind: "giftbox"; x: number; y: number; items: { id: string; stack: number }[]; index: number }
   | { kind: "building"; type: string; x: number; y: number };
 
@@ -191,6 +193,7 @@ export function solidRect(e: Entity): Rect | null {
     case "fruitTree":
       return e.stage === 0 ? null : { x: e.x * TILE, y: e.y * TILE, w: TILE, h: TILE };
     case "object":
+    case "bigCraftable":
       return { x: e.x * TILE, y: e.y * TILE, w: TILE, h: TILE };
     case "clump":
       return { x: e.x * TILE, y: e.y * TILE, w: e.w * TILE, h: e.h * TILE };
@@ -342,6 +345,12 @@ export function drawOps(e: Entity, data: TerrainData, season: SeasonName, grass?
         standardShadow(px + 32, py + 55, (py + TILE) / 15000),
         { texture: obj.Texture?.replace(/\\/g, "/") ?? SPRING_OBJECTS, sx: (i % 24) * 16, sy: Math.floor(i / 24) * 16, sw: 16, sh: 16, x: px, y: py, depth: (py + 32) / 10000, flip: false },
       ];
+    }
+    case "bigCraftable": {
+      const bc = data.bigCraftables?.[e.itemId];
+      if (!bc) return [];
+      const i = bc.SpriteIndex;
+      return [{ texture: bc.Texture?.replace(/\\/g, "/") ?? "TileSheets/Craftables", sx: (i % 8) * 16, sy: Math.floor(i / 8) * 32, sw: 16, sh: 32, x: px, y: py - TILE, depth: Math.max(0, (py + TILE - 24) / 10000) + e.x / 100000, flip: false }];
     }
     case "clump":
       return [

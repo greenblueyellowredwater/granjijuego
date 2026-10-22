@@ -31,6 +31,7 @@ export interface DirtTile {
   x: number;
   y: number;
   watered: boolean;
+  fertilizer?: string;
 }
 
 export function neighborMasks(tile: DirtTile, at: (x: number, y: number) => DirtTile | undefined) {
@@ -55,7 +56,26 @@ export function hoeDirtDrawOps(tile: DirtTile, masks: ReturnType<typeof neighbor
   const s = masks.sourceRectPosition, w = masks.wateredRectPosition;
   const ops = [{ texture, sx: (s % 4) * 16, sy: Math.floor(s / 4) * 16, sw: 16, sh: 16, x: px, y: py, depth: 1e-8, flip: false }];
   if (tile.watered) ops.push({ texture, sx: (w % 4) * 16 + 64, sy: Math.floor(w / 4) * 16, sw: 16, sh: 16, x: px, y: py, depth: 1.2e-8, flip: false });
+  const f = tile.fertilizer ? fertilizerSourceRect(tile.fertilizer) : null;
+  if (f) ops.push({ texture: "LooseSprites/Cursors", ...f, x: px, y: py, depth: 1.9e-8, flip: false });
   return ops;
+}
+
+const FERTILIZER_INDEX: Record<string, number> = { "368": 0, "369": 1, "919": 2, "370": 3, "371": 4, "920": 5, "465": 6, "466": 7, "918": 8 };
+const bareId = (id: string) => id.replace(/^\(O\)/, "");
+
+export function fertilizerSourceRect(id: string) {
+  const i = FERTILIZER_INDEX[bareId(id)] ?? 0;
+  return { sx: 173 + Math.trunc(i / 3) * 16, sy: 462 + (i % 3) * 16, sw: 16, sh: 16 };
+}
+
+export const fertilizerQualityLevel = (id: string | undefined) => (id ? ({ "368": 1, "369": 2, "919": 3 } as Record<string, number>)[bareId(id)] ?? 0 : 0);
+export const fertilizerSpeedBoost = (id: string | undefined) => (id ? ({ "465": 0.1, "466": 0.25, "918": 0.33 } as Record<string, number>)[bareId(id)] ?? 0 : 0);
+export const fertilizerWaterRetention = (id: string | undefined) => (id ? ({ "370": 0.33, "371": 0.66, "920": 1 } as Record<string, number>)[bareId(id)] ?? 0 : 0);
+
+export function canApplyFertilizer(dirt: { fertilizer?: string; crop?: { phase: number } | null }, id: string) {
+  if (dirt.fertilizer) return false;
+  return !(dirt.crop && dirt.crop.phase !== 0 && (bareId(id) === "368" || bareId(id) === "369"));
 }
 
 export function canTill(location: Location, x: number, y: number, occupied: (x: number, y: number) => boolean) {

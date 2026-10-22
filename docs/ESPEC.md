@@ -1012,7 +1012,35 @@ Aproximaciones:
   - Descripción del ítem partida a `ancho−8` en `+76 + 36n`, a 0,75.
 - `alturaDescripción(w) = alto(desc partida) + 36n + alto("Ingredients:") + 21`.
 
-Aproximaciones: sin cocina, sin cofres como fuente de materiales y sin colocar en el mundo los objetos fabricados.
+Aproximaciones: sin cocina y sin cofres como fuente de materiales.
+
+## Spec S19: colocar objetos y fertilizantes
+
+**Colocables** (`Object.isPlaceable`):
+- Siempre, con la etiqueta `placeable`. Nunca, con `not_placeable` o sin tipo.
+- Si no: categoría −8 o −9, tipo `Crafting` o fertilizante (−19), y comestibilidad < 0.
+- Los grandes fabricables `(BC)` siempre se pueden colocar. Las semillas siguen el camino de plantar (spec S8).
+
+**Colocar** (clic izquierdo o C con el objeto en la mano, a una casilla del centro del granjero, igual que plantar):
+- Fertilizante sobre tierra arada: se aplica si la tierra no tiene fertilizante. Los de calidad 368 y 369 no se aplican si el cultivo ya pasó la fase 0 (`CheckApplyFertilizerRules`).
+- Otro objeto: la casilla debe estar libre de entidades, ser transitable, no ser agua y no tocar la caja del granjero.
+  - Se crea un objeto colocado o un `bigCraftable` y se consume 1.
+  - Gran fabricable: dibujo `TileSheets/Craftables (i mod 8 · 16, ⌊i/8⌋ · 32, 16, 32)` en `(x, y−64)`, profundidad `(y+64−24)/10000`. Es sólido.
+- Pico o hacha sobre un objeto colocado: lo quita y lo suelta como ítem.
+
+**Fertilizantes** (`HoeDirt`):
+- Calidad: 368 → 1, 369 → 2, 919 → 3, usada en la calidad de cosecha.
+- Velocidad: 465 → 0,1, 466 → 0,25, 918 → 0,33.
+- Retención de agua: 370 → 0,33, 371 → 0,66, 920 → 1. Al día siguiente la tierra sigue regada si `random < retención`.
+- Dibujo `Cursors (173 + ⌊i/3⌋·16, 462 + (i mod 3)·16, 16, 16)`, sobre la tierra y debajo del cultivo. Índice i: 368=0, 369=1, 919=2, 370=3, 371=4, 920=5, 465=6, 466=7, 918=8.
+
+**Pilas** (`Object.maximumStackSize`): `(O)` y `(BC)` hasta 999, salvo 79, 842, 911 y los aparejos (−22), que van de a 1. El resto de los ítems va de a 1.
+
+Aproximaciones:
+- Sin efecto de velocidad en las fases.
+- Sin luz ni llama animada en la antorcha.
+- Sin cerca conectada, caminos (`Flooring`) ni retoños.
+- Sin interfaz de cofre.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

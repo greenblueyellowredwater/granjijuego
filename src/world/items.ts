@@ -20,9 +20,11 @@ export function parseId(qualified: string) {
   return m ? { type: m[1], id: m[2] } : { type: "O", id: qualified };
 }
 
-export function maximumStack(item: Item) {
+export function maximumStack(item: Item, category?: number) {
   const { type } = parseId(item.id);
-  return type === "O" ? 999 : 1;
+  if (type !== "O" && type !== "BC") return 1;
+  if (item.id === "(O)79" || item.id === "(O)842" || item.id === "(O)911" || category === -22) return 1;
+  return 999;
 }
 
 const square = (index: number, width: number) => ({ sx: (index * 16) % width, sy: Math.floor((index * 16) / width) * 16, sw: 16, sh: 16 });
@@ -96,4 +98,13 @@ export function tinyDigits(value: number, scale: number) {
     x += Math.trunc(5 * scale) - 1;
   }
   return { width: Math.trunc(digits.length * 5 * scale), glyphs: out };
+}
+
+export function isPlaceableObject(o: { Category?: number; Type?: string; Edibility?: number; ContextTags?: string[] | null }) {
+  const tags = o.ContextTags ?? [];
+  if (tags.includes("placeable")) return true;
+  if (tags.includes("not_placeable") || !o.Type) return false;
+  const c = o.Category ?? 0;
+  if (!(c === -8 || c === -9 || o.Type === "Crafting" || c === -19)) return false;
+  return (o.Edibility ?? -300) < 0;
 }
