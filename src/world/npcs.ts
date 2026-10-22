@@ -18,6 +18,8 @@ export function homeOf(data: CharacterData) {
 
 export class NpcManager implements NpcWorld {
   npcs: NpcState[] = [];
+  dialogueToday: Record<string, { chunks: string[]; index: number }> = {};
+  private homes = new Map<string, { location: string; x: number; y: number; facing: number }>();
   private readonly maps = new Map<string, Location | "loading">();
 
   constructor(
@@ -43,9 +45,11 @@ export class NpcManager implements NpcWorld {
 
   setupDay(characters: Record<string, CharacterData>, schedules: Record<string, Record<string, string>>, ctx: Omit<ScheduleContext, "hearts">, available: (name: string) => boolean) {
     this.npcs = [];
+    this.dialogueToday = {};
     for (const [name, data] of Object.entries(characters)) {
       const home = homeOf(data);
       if (!home || !available(name)) continue;
+      this.homes.set(name, home);
       const raw = schedules[name];
       let entries = raw ? (() => {
         const key = scheduleKey(name, raw, { ...ctx, hearts: 0 });
@@ -54,6 +58,10 @@ export class NpcManager implements NpcWorld {
       entries ??= [];
       this.npcs.push(startOfDay(name, home, entries));
     }
+  }
+
+  homeOf(name: string) {
+    return this.homes.get(name) ?? null;
   }
 
   tick(time: number, ms = 16) {

@@ -38,7 +38,10 @@ import { debrisDrops, debrisKind, spawnDebris, stepDebris, toolBreaks, type Item
 import { itemSprite } from "../world/items.ts";
 import { FALL_DROPS, hitTree, TreeMotion, type TreeEntity } from "../world/trees.ts";
 import type { NpcManager } from "../world/npcs.ts";
-import { npcFrame } from "../world/npc-sim.ts";
+import { npcFrame, type NpcState } from "../world/npc-sim.ts";
+import { DialogueBox } from "../render/dialogue-box.ts";
+import { dailyDialogue, dialogueChunks, parseDialogue } from "../world/dialogue.ts";
+import { SPRITE_TEXT_TEXTURE } from "../render/spritetext.ts";
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canTill, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
@@ -138,6 +141,8 @@ export interface WorldData {
   buildings: Record<string, BuildingData>;
   npcs: NpcManager;
   setupNpcs: () => void;
+  dialogues: Record<string, Record<string, string>>;
+  rainyDialogue: Record<string, string>;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
 }
@@ -183,6 +188,7 @@ export class World extends Phaser.Scene {
   private treeMotions = new Map<TreeEntity, TreeMotion>();
   private npcImages = new Map<string, { sprite: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image }>();
   private staticSolids: Rect[] = [];
+  private dialogueBox: DialogueBox | null = null;
   private water: { grid: WaterGrid; state: WaterState; tint: number; alpha: number; pool: Phaser.GameObjects.Image[] } | null = null;
   private ticks = 0;
   private lightSources: LightSource[] = [];
@@ -300,7 +306,11 @@ export class World extends Phaser.Scene {
       if (t) textures.add(t);
     }
     const { manifest } = this.params;
-    for (const n of this.params.npcs.npcs) textures.add(`Characters/${n.name}`);
+    for (const n of this.params.npcs.npcs) {
+      textures.add(`Characters/${n.name}`);
+      textures.add(`Portraits/${n.name}`);
+    }
+    textures.add(SPRITE_TEXT_TEXTURE);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
     }
@@ -869,13 +879,14 @@ export class World extends Phaser.Scene {
     this.toolbar = new ToolbarRenderer(this, HUD_DEPTH - 5, this.cache.json.get(TINY_FONT_DATA) as SpriteFontData | undefined);
     this.hud = fontData ? new Hud(this, fontData, this.params.text) : null;
     this.question = fontData ? new QuestionBox(this, fontData) : null;
+    this.dialogueBox = new DialogueBox(this, HUD_DEPTH + 20);
 
     const kb = this.input.keyboard!;
     this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,X,E") as Record<string, Phaser.Input.Keyboard.Key>;
     kb.on("keydown-C", () => this.useToolButton());
     kb.on("keydown-X", () => this.interact());
     kb.on("keydown-E", () => this.interact());
-    kb.on("keydown-ENTER", () => this.question?.confirm());
+    kb.on("keydown-ENTER", () => (this.dialogueBox?.open ? this.dialogueBox.advance() : this.question?.confirm()));
     kb.on("keydown-SPACE", () => this.question?.confirm());
     kb.on("keydown-ESC", () => this.question?.cancel());
     SLOT_KEYS.forEach((k, i) => kb.on(`keydown-${k}`, () => this.selectSlot(i)));
@@ -884,6 +895,10 @@ export class World extends Phaser.Scene {
     for (const k of ["DOWN", "S"]) kb.on(`keydown-${k}`, () => this.question?.move(1));
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (this.dialogueBox?.open) {
+        this.dialogueBox.advance();
+        return;
+      }
       if (this.question?.open) {
         const i = this.question.optionAt(p.x, p.y);
         if (i >= 0) this.question.confirm(i);
@@ -928,13 +943,64 @@ export class World extends Phaser.Scene {
     return toolbarLayout(cam.width, cam.height, this.body.y - cam.scrollY, cam.height);
   }
 
+  private npcAt(tx: number, ty: number) {
+    const tile = { x: tx * TILE, y: ty * TILE, w: TILE, h: TILE };
+    return this.params.npcs.in(this.location.name).find((n) => {
+      const b = { x: n.x + 8, y: n.y + 16, w: 48, h: 32 };
+      return b.x < tile.x + tile.w && tile.x < b.x + b.w && b.y < tile.y + tile.h && tile.y < b.y + b.h;
+    });
+  }
+
+  private talkTo(n: NpcState) {
+    const { state, dialogues, rainyDialogue } = this.params;
+    const lines = dialogues[n.name] ?? {};
+    const f = (state.friendship[n.name] ??= { points: 0, talkedToday: false });
+    const today = (this.params.npcs.dialogueToday[n.name] ??= (() => {
+      const met = state.flags.includes(`met:${n.name}`);
+      if (!met && lines.Introduction) {
+        state.flags.push(`met:${n.name}`);
+        return { chunks: dialogueChunks(lines.Introduction), index: 0 };
+      }
+      const home = this.params.npcs.homeOf(n.name);
+      const pick = dailyDialogue(n.name, lines, rainyDialogue, {
+        season: state.season,
+        dayOfMonth: state.dayOfMonth,
+        year: state.year,
+        hearts: Math.trunc(f.points / 250),
+        raining: weatherFlags(state.weather).raining,
+        daysPlayed: state.daysPlayed,
+        uniqueId: state.uniqueId,
+        homePixel: { x: (home?.x ?? 0) * 64, y: (home?.y ?? 0) * 64 },
+      });
+      return { chunks: pick ? dialogueChunks(pick.text) : [], index: 0 };
+    })());
+    if (today.index >= today.chunks.length) return false;
+    const pages = parseDialogue(today.chunks[today.index++], state.farmerName, this.appearance.isMale);
+    if (!pages.length) return false;
+    if (!f.talkedToday) {
+      f.talkedToday = true;
+      f.points += 20;
+    }
+    const b = farmerBox(this.body.x, this.body.y);
+    const dx = b.x + b.w / 2 - (n.x + 32), dy = b.y + b.h / 2 - (n.y + 32);
+    if (!n.walking) n.facing = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : dy > 0 ? 2 : 0;
+    this.dialogueBox?.show(n.name, pages);
+    return true;
+  }
+
   private interact() {
     if (!this.location || this.warping) return;
+    if (this.dialogueBox?.open) {
+      this.dialogueBox.advance();
+      return;
+    }
     if (this.question?.open) {
       this.question.confirm();
       return;
     }
     const t = facingTile(this.body);
+    const npc = this.npcAt(t.x, t.y);
+    if (npc && this.talkTo(npc)) return;
     if (this.tryOpenGiftbox(t.x, t.y)) return;
     if (this.tryShip(t.x, t.y)) return;
     if (this.tryBuildingDoor(t.x, t.y)) return;
@@ -964,7 +1030,7 @@ export class World extends Phaser.Scene {
   }
 
   private get timePasses() {
-    return !this.question?.open && !this.endingDay && !this.warping;
+    return !this.question?.open && !this.dialogueBox?.open && !this.endingDay && !this.warping;
   }
 
   private get canMove() {
@@ -1010,6 +1076,7 @@ export class World extends Phaser.Scene {
       state.weather = weather.today;
       state.weatherForTomorrow = weather.tomorrow;
       dayUpdateLocations(state, this.params.crops, weatherFlags(state.weather).raining);
+      for (const f of Object.values(state.friendship)) f.talkedToday = false;
       this.params.setupNpcs();
       state.stamina = state.maxStamina;
       clock.time = 600;
@@ -1051,6 +1118,9 @@ export class World extends Phaser.Scene {
     this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: flags.raining }));
     this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
     this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items);
+    this.dialogueBox?.update(this.game.loop.rawDelta);
+    const speaker = this.dialogueBox?.speaker ? `Portraits/${this.dialogueBox.speaker}` : null;
+    this.dialogueBox?.draw(this.cameras.main.width, this.cameras.main.height, speaker && this.textures.exists(speaker) ? speaker : null);
     this.hud?.draw(
       {
         time: clock.time,

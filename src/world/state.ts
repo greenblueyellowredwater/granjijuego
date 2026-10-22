@@ -22,6 +22,8 @@ export interface GameState {
   waterLeft: number;
   flags: string[];
   shipping: Item[];
+  friendship: Record<string, { points: number; talkedToday: boolean }>;
+  farmerName: string;
   appearance?: Appearance;
   locations: Record<string, { entities: Entity[] }>;
 }
@@ -44,6 +46,8 @@ export function newGameState(random = Math.random): GameState {
     waterLeft: 40,
     flags: [],
     shipping: [],
+    friendship: {},
+    farmerName: "Granjero",
     appearance: DEFAULT_APPEARANCE,
     locations: {},
   };
@@ -64,6 +68,8 @@ export function withDefaults(state: GameState): GameState {
     waterLeft: state.waterLeft ?? 40,
     flags: state.flags ?? [],
     shipping: state.shipping ?? [],
+    friendship: state.friendship ?? {},
+    farmerName: state.farmerName ?? "Granjero",
   };
 }
 

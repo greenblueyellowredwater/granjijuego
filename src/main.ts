@@ -146,7 +146,14 @@ async function boot() {
   };
   const npcNames = Object.keys(characters).filter((n) => `Characters/${n}` in manifest.textures && characters[n].Home?.length);
   const schedules: Record<string, Record<string, string>> = {};
-  await Promise.all(npcNames.map(async (n) => (schedules[n] = await load(`Characters/schedules/${n}`).catch(() => undefined))));
+  const dialogues: Record<string, Record<string, string>> = {};
+  await Promise.all(
+    npcNames.map(async (n) => {
+      schedules[n] = await load(`Characters/schedules/${n}`).catch(() => undefined);
+      dialogues[n] = await load(`Characters/Dialogue/${n}`).catch(() => ({}));
+    }),
+  );
+  const rainyDialogue = (await load("Characters/Dialogue/rainy").catch(() => ({}))) as Record<string, string>;
   const mapToLocation = new Map<string, string>();
   for (const name of Object.keys(locations)) mapToLocation.set(resolveMapPath(locations, name), name);
   const graph: Record<string, GraphWarp[]> = {};
@@ -185,6 +192,8 @@ async function boot() {
     buildings,
     npcs,
     setupNpcs,
+    dialogues,
+    rainyDialogue,
     items: {
       tools,
       weapons,
