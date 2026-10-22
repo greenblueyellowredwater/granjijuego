@@ -13,6 +13,12 @@ export function dialogueBoxLayout(uiWidth: number, uiHeight: number) {
   return { x, y, w: BOX_W, h: BOX_H, portraitX, portraitW: x + BOX_W - portraitX, textWidth: BOX_W - 460 - 24 };
 }
 
+export function messageBoxLayout(uiWidth: number, uiHeight: number, text: string) {
+  const w = Math.min(1240, widthOfString(text) + 64);
+  const h = layoutSpriteText(text, w - 20).height + 4;
+  return { x: Math.trunc((uiWidth - w) / 2), y: uiHeight - h - 64, w, h };
+}
+
 export class DialogueBox {
   private readonly batch: UiBatch;
   pages: DialoguePage[] = [];
@@ -20,6 +26,7 @@ export class DialogueBox {
   chars = 0;
   private timer = 0;
   speaker = "";
+  portraitless = false;
 
   constructor(scene: Phaser.Scene, depth: number) {
     this.batch = new UiBatch(scene, depth);
@@ -30,11 +37,17 @@ export class DialogueBox {
   }
 
   show(speaker: string, pages: DialoguePage[]) {
+    this.portraitless = false;
     this.speaker = speaker;
     this.pages = pages;
     this.page = 0;
     this.chars = 0;
     this.timer = 0;
+  }
+
+  showMessage(text: string) {
+    this.show("", text.split("#").filter((t) => t.length > 0).map((t) => ({ text: t, portrait: 0 })));
+    this.portraitless = true;
   }
 
   advance() {
@@ -80,7 +93,12 @@ export class DialogueBox {
   draw(uiWidth: number, uiHeight: number, portraitTexture: string | null) {
     const b = this.batch;
     b.begin();
-    if (this.open) {
+    if (this.open && this.portraitless) {
+      const text = this.pages[this.page].text;
+      const m = messageBoxLayout(uiWidth, uiHeight, this.pages[0].text);
+      this.box(m.x, m.y, m.w, m.h);
+      this.text(text, m.x + 8, m.y + 8, m.w - 20, this.chars);
+    } else if (this.open) {
       const l = dialogueBoxLayout(uiWidth, uiHeight);
       this.box(l.x, l.y, l.w, l.h);
       const p = l.portraitX;

@@ -6,6 +6,11 @@ export interface CharacterData {
   Home?: { Id?: string; Condition?: string | null; Location: string; Tile: { x: number; y: number }; Direction?: string | null }[] | null;
   Size?: { x: number; y: number } | null;
   CanSocialize?: string | null;
+  BirthSeason?: number | string | null;
+  BirthDay?: number;
+  Manner?: number | string;
+  CanBeRomanced?: boolean;
+  CanReceiveGifts?: boolean;
 }
 
 const DIRECTIONS: Record<string, number> = { up: 0, right: 1, down: 2, left: 3 };

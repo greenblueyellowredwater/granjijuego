@@ -37,7 +37,8 @@ import { dayUpdateLocations } from "../world/day.ts";
 import { debrisDrops, debrisKind, spawnDebris, stepDebris, toolBreaks, type ItemDebris } from "../world/debris.ts";
 import { itemSprite } from "../world/items.ts";
 import { FALL_DROPS, hitTree, TreeMotion, type TreeEntity } from "../world/trees.ts";
-import type { NpcManager } from "../world/npcs.ts";
+import type { CharacterData, NpcManager } from "../world/npcs.ts";
+import { canBeGivenAsGift, canReceiveGiftNow, changeFriendship, giftFriendshipChange, giftReaction, giftTaste, objectContextTags, recordGift, resetFriendshipsForNewDay, totalDays, type Friendship } from "../world/friendship.ts";
 import { npcFrame, type NpcState } from "../world/npc-sim.ts";
 import { DialogueBox } from "../render/dialogue-box.ts";
 import { dailyDialogue, dialogueChunks, parseDialogue } from "../world/dialogue.ts";
@@ -145,6 +146,8 @@ export interface WorldData {
   setupNpcs: () => void;
   dialogues: Record<string, Record<string, string>>;
   rainyDialogue: Record<string, string>;
+  giftTastes: Record<string, string>;
+  characters: Record<string, CharacterData>;
   shops: Record<string, ShopData>;
   strings: Record<string, Record<string, string>>;
   onStatus: (text: string) => void;
@@ -991,11 +994,63 @@ export class World extends Phaser.Scene {
       f.talkedToday = true;
       f.points += 20;
     }
+    this.faceFarmer(n);
+    this.dialogueBox?.show(n.name, pages);
+    return true;
+  }
+
+  private isBirthday(name: string) {
+    const data = this.params.characters[name];
+    if (!data || data.BirthSeason === undefined || data.BirthSeason === null) return false;
+    const season = typeof data.BirthSeason === "number" ? SEASON_ORDER[data.BirthSeason] : String(data.BirthSeason).toLowerCase();
+    return season === this.params.state.season && data.BirthDay === this.params.state.dayOfMonth;
+  }
+
+  private tryGift(n: NpcState) {
+    const { state, items, giftTastes, characters } = this.params;
+    const item = state.inventory[state.currentToolIndex];
+    if (!item || !canBeGivenAsGift(items.objects, item.id)) return false;
+    const data: CharacterData | undefined = characters[n.name];
+    if (!(n.name in giftTastes) || data?.CanReceiveGifts === false) return false;
+    const birthday = this.isBirthday(n.name);
+    const csStrings = this.params.strings["Strings\\StringsFromCSFiles"] ?? {};
+    const existing = state.friendship[n.name];
+    const refusal = canReceiveGiftNow(existing, birthday, item.id);
+    if (refusal) {
+      const text = refusal.kind === "alreadyToday" ? (csStrings["NPC.cs.3981"] ?? "").replace("{0}", n.name) : (csStrings["NPC.cs.3987"] ?? "").replace("{0}", n.name).replace("{1}", "2");
+      this.dialogueBox?.showMessage(text);
+      return true;
+    }
+    const f: Friendship = (state.friendship[n.name] ??= { points: 0, talkedToday: false });
+    const taste = giftTaste(n.name, item.id, items.objects, giftTastes);
+    if (item.id !== "(O)StardropTea") recordGift(f, totalDays(state.year, state.season, state.dayOfMonth));
+    changeFriendship(f, giftFriendshipChange(taste, item.quality ?? 0, birthday), !!data?.CanBeRomanced);
+    const reaction = giftReaction({
+      name: n.name,
+      qualifiedId: item.id,
+      taste,
+      birthday,
+      rude: Number(data?.Manner) === 2 || String(data?.Manner).toLowerCase() === "rude",
+      tags: objectContextTags(items.objects, item.id),
+      dialogue: this.params.dialogues[n.name] ?? {},
+      tastes: giftTastes,
+      strings: csStrings,
+      nextBool: () => Math.random() < 0.5,
+    });
+    consumeOne(state.inventory, state.currentToolIndex);
+    this.faceFarmer(n);
+    if (reaction) {
+      const text = reaction.emotion && !/\$[a-z0-9]+\s*$/.test(reaction.text) ? `${reaction.text}${reaction.emotion}` : reaction.text;
+      const pages = parseDialogue(text, state.farmerName, this.appearance.isMale);
+      if (pages.length) this.dialogueBox?.show(n.name, pages);
+    }
+    return true;
+  }
+
+  private faceFarmer(n: NpcState) {
     const b = farmerBox(this.body.x, this.body.y);
     const dx = b.x + b.w / 2 - (n.x + 32), dy = b.y + b.h / 2 - (n.y + 32);
     if (!n.walking) n.facing = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 1 : 3) : dy > 0 ? 2 : 0;
-    this.dialogueBox?.show(n.name, pages);
-    return true;
   }
 
   private localized(text: string | null | undefined) {
@@ -1069,6 +1124,7 @@ export class World extends Phaser.Scene {
     }
     const t = facingTile(this.body);
     const npc = this.npcAt(t.x, t.y);
+    if (npc && this.tryGift(npc)) return;
     if (npc && this.talkTo(npc)) return;
     if (this.tryOpenGiftbox(t.x, t.y)) return;
     if (this.tryShip(t.x, t.y)) return;
@@ -1146,7 +1202,7 @@ export class World extends Phaser.Scene {
       state.weather = weather.today;
       state.weatherForTomorrow = weather.tomorrow;
       dayUpdateLocations(state, this.params.crops, weatherFlags(state.weather).raining);
-      for (const f of Object.values(state.friendship)) f.talkedToday = false;
+      resetFriendshipsForNewDay(state.friendship, (name) => (name in this.params.characters ? !!this.params.characters[name].CanBeRomanced : null), totalDays(state.year, state.season, state.dayOfMonth));
       this.params.setupNpcs();
       state.stamina = state.maxStamina;
       clock.time = 600;

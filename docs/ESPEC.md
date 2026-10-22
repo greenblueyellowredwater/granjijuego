@@ -627,6 +627,93 @@ Fuente: `NPC.TryLoadSchedule`, `parseMasterScheduleImpl`, `pathfindToNextSchedul
 
 Aproximaciones: no hay tooltip, ni compra con Shift para varias unidades, ni diálogo del dueño, ni animación de ítem en mano.
 
+## Spec S11: regalos y amistad
+
+**Gusto** (`NPC.getGiftTasteForThisItem`). Valores: 0 encanta, 2 gusta, 4 disgusta, 6 odia, 8 neutral, 7 té de fruta estelar (`(O)StardropTea`, siempre).
+- Universales (`Universal_Love/Hate/Like/Dislike/Neutral` de `Data/NPCGiftTastes`), en este orden y pisándose:
+  1. Por categoría (número negativo como texto) en el orden encanta, odia, gusta, disgusta.
+  2. Por etiqueta de contexto con el mismo orden.
+  3. Por ítem explícito: encanta, odia, gusta, disgusta, neutral. Marca "explícito"; con neutral también marca "neutral explícito".
+- Tipo `Arch`: disgusta, salvo Penny y Dwarf, que les gusta.
+- Si quedó neutral sin ser neutral explícito:
+  - Comestibilidad distinta de −300 y negativa: odia.
+  - Si no, con precio menor a 20: disgusta.
+- Lista personal (campos impares 1, 3, 5, 7, 9 = encanta, gusta, disgusta, odia, neutral), evaluada en orden encanta, odia, gusta, disgusta, neutral:
+  1. Primero por ítem explícito, que gana sobre todo.
+  2. Después por etiqueta.
+  3. Por último por categoría, solo si no hubo ítem universal explícito y la categoría no es 0.
+- Una entrada de lista resuelve a ítem si empieza con `(`, o si es un id de `Data/Objects` (se le antepone `(O)`). Se ignoran las que empiezan con `-`.
+- Las etiquetas son entradas no vacías que no empiezan con dígito ni `-`.
+
+**Etiquetas base** (`ItemContextTagManager.GetBaseContextTags`):
+- `id_(o)<id>` y `id_o_<id>`.
+- Las de `ContextTags` del objeto.
+- `geode` si tiene drops de geoda y `not_giftable` si `CanBeGivenAsGift` es falso.
+- `item_<nombre>` e `item_type_<tipo>`, saneados: trim, minúsculas, espacio→`_` y sin `'`.
+- `category_<x>` según la tabla de categorías:
+  - −2 gem, −4 fish, −5 egg, −6 milk, −7 cooking, −8 crafting, −9 big_craftable, −12 minerals, −14 meat.
+  - −15 metal_resources, −16 building_resources, −17 sell_at_pierres, −18 sell_at_pierres_and_marnies, −19 fertilizer, −20 junk, −21 bait, −22 tackle.
+  - −23 sell_at_fish_shop, −24 furniture, −25 ingredients, −26 artisan_goods, −27 syrup, −28 monster_loot, −29 equipment.
+  - −74 seeds, −75 vegetable, −79 fruits, −80 flowers, −81 greens.
+  - −95 hat, −96 ring, −97 boots, −98 weapon, −99 tool, −100 clothing, −101 trinket, −999 litter.
+
+**Entregar** (`NPC.checkAction` → `tryToReceiveActiveObject`):
+- Con un objeto `(O)` regalable en la mano, la acción sobre el NPC intenta regalar antes de hablar.
+- El NPC debe estar en `NPCGiftTastes` y no tener `CanReceiveGifts` en falso.
+- Rechazos, salvo con el té:
+  - Con 2 regalos en la semana y sin cumpleaños: `NPC.cs.3987` ("ya le diste {0} {1} regalos esta semana").
+  - Con 1 regalo hoy: `NPC.cs.3981`.
+  - Los mensajes se muestran en una caja sin retrato: ancho `min(1240, ancho SpriteText + 64)`, centrada y a 64 px del borde inferior.
+- Al aceptar se suma 1 a regalos de hoy y de la semana, se guarda el día del regalo y se consume 1 del ítem.
+
+**Puntos** (`NPC.receiveGift`):
+- Multiplicador de calidad: 1 → 1,1f, 2 → 1,25, 4 → 1,5; el resto, 1.
+- Multiplicador de cumpleaños: ×8.
+- Puntos por gusto:
+
+  | Gusto | Puntos |
+  | --- | --- |
+  | Encanta | `trunc(80·m·q)` |
+  | Gusta | `trunc(45·m·q)` |
+  | Neutral | `20·m` |
+  | Disgusta | `−20·m` |
+  | Odia | `−40·m` |
+  | Té | `min(750, 250·m)` |
+
+- `changeFriendship` limita a `[0, (corazonesMax+1)·250−1]`. Los corazones máximos son 8 si es romanceable (sin noviazgo) y 10 si no.
+
+**Reacción** (`NPC.GetGiftReaction`). Prefijo `AcceptGift` (o `AcceptBirthdayGift` en cumpleaños). Se usa el primer diálogo del personaje que exista:
+1. `_<idCalificado>`.
+2. `_<etiqueta>`.
+3. `_<Gusto>_<etiqueta>` y luego `_<General>_<etiqueta>`.
+4. `_<Gusto>` y luego `_<General>`.
+5. El prefijo solo.
+
+`<Gusto>` es Loved, Liked, Disliked, Hated o Neutral. `<General>` es Positive para encanta, gusta y neutral, y Negative para disgusta y odia.
+
+Si no existe ninguno:
+- Sin cumpleaños: el texto del campo par de `NPCGiftTastes` (0, 2, 4, 6; 8 para neutral; 0 para el té).
+- En cumpleaños: frases genéricas de `StringsFromCSFiles` según modales (`Manner` 2 = grosero):
+  - Positivo, con una moneda al aire: 4274/4275 o 4276/4277.
+  - Negativo: 4278/4279.
+  - Neutral: 4280/4281.
+
+Emoción por defecto `$h` (encanta, gusta, té) o `$s` (disgusta, odia), si el texto no trae una.
+
+**Nuevo día** (`Farmer.resetFriendshipsForNewDay`):
+- Si no hablaste con el NPC, pierde 2 puntos salvo que ya tenga 2500 o más (2000 si es romanceable sin noviazgo).
+- Después se reinicia `talkedToday`.
+- `GiftsToday` vuelve a 0 si el último regalo no fue hoy.
+- Si cambió la semana (`(TotalDays+1)/7`, con `TotalDays = ((año−1)·4+estación)·28 + día−1`):
+  - Con 2 regalos en la semana anterior, suma +10.
+  - `GiftsThisWeek` vuelve a 0.
+- Charla diaria: +20 la primera vez del día.
+
+Aproximaciones:
+- Sin emotes (corazón 20, enojo 12, té 56) ni la animación del granjero al entregar.
+- Sin celos de cónyuge ni misiones de entrega.
+- Sin regalo por encima del mostrador: hace falta tener al NPC enfrente.
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:

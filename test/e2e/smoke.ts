@@ -134,6 +134,21 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       await page.keyboard.press("Escape");
       await new Promise((r) => setTimeout(r, 300));
       if (await world(`w.shop.open`)) throw new Error("No cerró la tienda");
+      await world(`(w.params.state.inventory[6] = { id: "(O)24", stack: 2, quality: 0 }, w.selectSlot(6), w.params.npcs.npcs.forEach(function (n) { if (n.name === "Pierre") { n.x = 4 * 64; n.y = 18 * 64; n.schedule = []; } }), w.body.facing = 0, 1)`);
+      await page.keyboard.press("x");
+      await new Promise((r) => setTimeout(r, 300));
+      const gift = (await world(`JSON.stringify({ f: w.params.state.friendship.Pierre, open: w.dialogueBox.open, portrait: !w.dialogueBox.portraitless, left: w.params.state.inventory[6].stack })`)) as string;
+      const g = JSON.parse(gift);
+      if (g.f?.points !== 45 || g.f.giftsToday !== 1 || !g.open || !g.portrait || g.left !== 1) throw new Error(`Regalo inesperado: ${gift}`);
+      await page.screenshot({ path: `${OUT}/gift.png` });
+      for (let i = 0; i < 10 && (await world(`w.dialogueBox.open`)); i++) {
+        await page.keyboard.press("x");
+        await new Promise((r) => setTimeout(r, 150));
+      }
+      await page.keyboard.press("x");
+      await new Promise((r) => setTimeout(r, 300));
+      const again = (await world(`JSON.stringify({ text: w.dialogueBox.open && w.dialogueBox.portraitless ? w.dialogueBox.pages[0].text : null, left: w.params.state.inventory[6].stack })`)) as string;
+      if (again !== '{"text":"You\'ve already given Pierre a gift today.","left":1}') throw new Error(`Segundo regalo: ${again}`);
     },
   ],
   [
