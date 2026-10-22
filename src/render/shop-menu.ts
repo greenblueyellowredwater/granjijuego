@@ -3,7 +3,7 @@ import { drawItemInMenu } from "./toolbar.ts";
 import { drawInventoryGrid, inventorySlotAt } from "./menu-parts.ts";
 import { layoutSpriteText, SPRITE_TEXT_TEXTURE, SPRITE_TEXT_ZOOM, widthOfString } from "./spritetext.ts";
 import { moneyDigits } from "./hud-layout.ts";
-import type { Item, ItemData } from "../world/items.ts";
+import { itemSprite, type Item, type ItemData } from "../world/items.ts";
 import type { StockEntry } from "../world/shops.ts";
 
 const CURSORS = "LooseSprites/Cursors";
@@ -83,9 +83,26 @@ export class ShopMenu {
         drawItemInMenu(b, { id: entry.id, stack: 1 }, r.x + 32 - 8, r.y + 24, 1, 1, data);
         const affordable = money >= entry.price;
         this.text(names(entry.id), r.x + 96 + 8, r.y + 28);
-        const priceText = `${entry.price} `;
-        this.text(priceText, r.x + r.w - widthOfString(priceText) - 60, r.y + 28, affordable ? 1 : 0.5);
-        b.draw({ texture: CURSORS, sx: 193, sy: 373, sw: 9, sh: 10, x: r.x + r.w - 52, y: r.y + 40 - 4, scaleX: 4, alpha: affordable ? 1 : 0.25 });
+        let right = r.x + r.w, iconY = r.y + 24, textY = r.y + 44;
+        if (entry.price > 0) {
+          const priceText = `${entry.price} `;
+          this.text(priceText, right - widthOfString(priceText) - 60, r.y + 28, affordable ? 1 : 0.5);
+          b.draw({ texture: CURSORS, sx: 193, sy: 373, sw: 9, sh: 10, x: right - 52, y: r.y + 40 - 4, scaleX: 4, alpha: affordable ? 1 : 0.25 });
+          right -= widthOfString(priceText) + 96;
+          iconY = r.y + 20;
+          textY = r.y + 28;
+        }
+        if (entry.trade) {
+          const have = inventory.reduce((n, it) => n + (it && it.id === entry.trade!.id ? it.stack : 0), 0) >= entry.trade.count;
+          const label = `x${entry.trade.count}`;
+          const w = widthOfString(label);
+          const sprite = itemSprite({ id: entry.trade.id, stack: 1 }, data);
+          if (sprite) {
+            b.draw({ ...sprite, x: right - 88 - w - 4, y: iconY + 4, scaleX: 4, tint: 0x000000, alpha: have ? 0.35 : 0 });
+            b.draw({ ...sprite, x: right - 88 - w, y: iconY, scaleX: 4, alpha: have ? 1 : 0.25 });
+          }
+          this.text(label, right - w - 16, textY, have ? 1 : 0.5);
+        }
       });
       b.draw({ texture: CURSORS, sx: 421, sy: 459, sw: 11, sh: 12, x: l.up.x, y: l.up.y, scaleX: 4 });
       b.draw({ texture: CURSORS, sx: 421, sy: 472, sw: 11, sh: 12, x: l.down.x, y: l.down.y, scaleX: 4 });

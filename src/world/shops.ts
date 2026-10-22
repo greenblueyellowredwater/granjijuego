@@ -32,6 +32,31 @@ export interface StockEntry {
   id: string;
   price: number;
   stock: number;
+  trade?: { id: string; count: number };
+  requireTool?: string;
+}
+
+export interface ToolUpgradeInfo {
+  ConventionalUpgradeFrom?: string | null;
+  UpgradeLevel?: number;
+  UpgradeFrom?: { Condition?: string | null; Price?: number; RequireToolId?: string | null; TradeItemId?: string | null; TradeItemAmount?: number }[] | null;
+}
+
+const CONVENTIONAL_PRICE: Record<number, number> = { 1: 2000, 2: 5000, 3: 10000, 4: 25000 };
+const CONVENTIONAL_TRADE: Record<number, string> = { 1: "334", 2: "335", 3: "336", 4: "337" };
+
+export function toolUpgrades(tools: Record<string, ToolUpgradeInfo>, has: (qualifiedId: string) => boolean, condition: (q: string) => boolean): StockEntry[] {
+  const out: StockEntry[] = [];
+  for (const [id, t] of Object.entries(tools)) {
+    const options = [
+      ...(t.ConventionalUpgradeFrom ? [{ RequireToolId: t.ConventionalUpgradeFrom, Price: CONVENTIONAL_PRICE[t.UpgradeLevel ?? 1] ?? 2000, TradeItemId: `(O)${CONVENTIONAL_TRADE[t.UpgradeLevel ?? 1] ?? "334"}`, TradeItemAmount: 5, Condition: null }] : []),
+      ...(t.UpgradeFrom ?? []),
+    ];
+    const u = options.find((o) => (!o.Condition || condition(o.Condition)) && (!o.RequireToolId || has(o.RequireToolId)));
+    if (!u) continue;
+    out.push({ id: `(T)${id}`, price: Math.max(0, u.Price ?? 0), stock: 1, ...(u.TradeItemId ? { trade: { id: u.TradeItemId, count: u.TradeItemAmount ?? 1 } } : {}), ...(u.RequireToolId ? { requireTool: u.RequireToolId } : {}) });
+  }
+  return out;
 }
 
 export function applyModification(value: number, modification: number, amount: number) {
@@ -67,10 +92,14 @@ export function applyModifiers(value: number, modifiers: QuantityModifier[] | nu
   return stacked;
 }
 
-export function shopStock(shop: ShopData, basePrice: (qualifiedId: string, useObjectDataPrice: boolean) => number | null, ctx: GsqContext): StockEntry[] {
+export function shopStock(shop: ShopData, basePrice: (qualifiedId: string, useObjectDataPrice: boolean) => number | null, ctx: GsqContext, queries: Record<string, () => StockEntry[]> = {}): StockEntry[] {
   const out: StockEntry[] = [];
   for (const item of shop.Items) {
     const id = item.ItemId ?? item.Id;
+    if (id && queries[id]) {
+      if (checkConditions(item.Condition, ctx)) out.push(...queries[id]());
+      continue;
+    }
     if (!id || !/^\(\w+\)\S+$/.test(id)) continue;
     if (!checkConditions(item.Condition, ctx)) continue;
     let price = item.Price !== undefined && item.Price >= 0 ? item.Price : basePrice(id, !!item.UseObjectDataPrice);

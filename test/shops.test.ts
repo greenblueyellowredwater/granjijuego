@@ -56,3 +56,12 @@ describe("tiendas", () => {
     expect(l.rows.map((r) => r.y)).toEqual([36, 142, 248, 354]);
   });
 });
+
+describe("mejoras de herramientas", async () => {
+  const { toolUpgrades } = await import("../src/world/shops.ts");
+  it("ofrece la mejora convencional con precio y barras por nivel", () => {
+    const tools = { CopperAxe: { ConventionalUpgradeFrom: "(T)Axe", UpgradeLevel: 1 }, SteelAxe: { ConventionalUpgradeFrom: "(T)CopperAxe", UpgradeLevel: 2 }, CopperTrashCan: { UpgradeFrom: [{ Condition: "FALSE", Price: -1, TradeItemId: "(O)334", TradeItemAmount: 5 }] } };
+    expect(toolUpgrades(tools, (q) => q === "(T)Axe", () => false)).toEqual([{ id: "(T)CopperAxe", price: 2000, stock: 1, trade: { id: "(O)334", count: 5 }, requireTool: "(T)Axe" }]);
+    expect(toolUpgrades(tools, (q) => q === "(T)CopperAxe", () => false)[0]).toMatchObject({ id: "(T)SteelAxe", price: 5000, trade: { id: "(O)335" } });
+  });
+});

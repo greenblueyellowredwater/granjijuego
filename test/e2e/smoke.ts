@@ -277,6 +277,13 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       const stock = (await world(`JSON.stringify(w.shop.open && w.shop.stock.map(function (e) { return e.id + "$" + e.price; }))`)) as string;
       if (stock !== '["(O)378$75","(O)380$150","(O)382$150","(O)384$400"]') throw new Error(`Stock de Clint: ${stock}`);
       await page.screenshot({ path: `${OUT}/clint-shop.png` });
+      await page.keyboard.press("Escape");
+      await new Promise((r) => setTimeout(r, 300));
+      await world(`(w.params.state.money = 3000, w.params.state.inventory[6] = { id: "(O)334", stack: 6, quality: 0 }, w.openShop("ClintUpgrade"), 1)`);
+      await page.mouse.click(600, 130);
+      await new Promise((r) => setTimeout(r, 300));
+      const up = (await world(`JSON.stringify({ up: w.params.state.toolUpgrade, money: w.params.state.money, bars: w.params.state.inventory[6].stack, axe: w.params.state.inventory.some(function (i) { return i && i.id === "(T)Axe"; }) })`)) as string;
+      if (up !== '{"up":{"id":"(T)CopperAxe","daysLeft":2},"money":1000,"bars":1,"axe":false}') throw new Error(`Mejora: ${up}`);
     },
   ],
   [

@@ -1142,7 +1142,18 @@ Aproximaciones:
 - No llevan sombra `(O)590` ni `(O)SeedSpot`.
 - El stock omite ítems que todavía no se pueden dibujar: muebles `(F)` y consultas como `RANDOM_ITEMS` o `DISH_OF_THE_DAY`.
 
-Aproximaciones: sin mejora de herramientas, compra de animales, construcción, mejora de casa, geodas ni diálogo del dueño en la tienda.
+**Mejora de herramientas** (`ClintUpgrade`, consulta `TOOL_UPGRADES`):
+- Por cada herramienta de `Data/Tools` con `ConventionalUpgradeFrom` presente en el inventario, se ofrece la mejora.
+  - Precio por nivel: 1 → 2000, 2 → 5000, 3 → 10000, 4 → 25000.
+  - Barras por nivel: 334, 335, 336, 337, siempre ×5.
+- También se aceptan las entradas de `UpgradeFrom` (con condición GSQ).
+- En la fila, el ítem de canje va ×4 a la izquierda del precio, en `derecha − (ancho_precio + 96) − 88 − ancho("x5")`, seguido de "xN" (a 0,25/0,5 si falta).
+- Comprar (`Tool.actionWhenPurchased`), si no hay otra mejora en curso:
+  - Se quita la herramienta anterior y se cobran oro y barras.
+  - Queda en `toolBeingUpgraded` por 2 días, se cierra la tienda y Clint dice `Tool.cs.14317`.
+- Cada noche resta 1 día. Con 0 días, la acción en el mostrador entrega la herramienta antes del menú, o muestra `Clint_NoInventorySpace` si no hay lugar.
+
+Aproximaciones: sin efecto del nivel de la herramienta (carga y área), compra de animales, construcción, mejora de casa, geodas ni diálogo del dueño en la tienda.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

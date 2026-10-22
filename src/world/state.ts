@@ -29,6 +29,7 @@ export interface GameState {
   experience: number[];
   newLevels: [number, number][];
   professions: number[];
+  toolUpgrade?: { id: string; daysLeft: number } | null;
   craftingRecipes: string[];
   cookingRecipes: string[];
   appearance?: Appearance;

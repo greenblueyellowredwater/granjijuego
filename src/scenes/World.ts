@@ -57,7 +57,7 @@ import { DialogueBox } from "../render/dialogue-box.ts";
 import { dailyDialogue, dialogueChunks, parseDialogue } from "../world/dialogue.ts";
 import { SPRITE_TEXT_TEXTURE } from "../render/spritetext.ts";
 import { ShopMenu } from "../render/shop-menu.ts";
-import { objectBasePrice, shopStock, type ShopData } from "../world/shops.ts";
+import { objectBasePrice, shopStock, toolUpgrades, type ShopData, type ToolUpgradeInfo } from "../world/shops.ts";
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canApplyFertilizer, canTill, fertilizerQualityLevel, fertilizerSpeedBoost, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
@@ -1604,9 +1604,21 @@ export class World extends Phaser.Scene {
         const clint = ownerAt("Clint", [{ x: t.x, y: t.y - 1 }, { x: t.x - 1, y: t.y - 1 }]);
         if (!clint) return false;
         clint.facing = 2;
+        const upgrade = this.params.state.toolUpgrade;
+        if (upgrade && upgrade.daysLeft <= 0) {
+          if (addItem(this.params.state.inventory.slice(0, MAX_ITEMS), { id: upgrade.id, stack: 1 })) {
+            this.dialogueBox?.show("Clint", parseDialogue(this.localized(this.params.strings["Data\\ExtraDialogue"]?.Clint_NoInventorySpace ?? this.params.text.inventoryFull), this.params.state.farmerName, this.appearance.isMale));
+            return true;
+          }
+          addItem(this.params.state.inventory, { id: upgrade.id, stack: 1 });
+          this.params.state.toolUpgrade = null;
+          this.message = this.itemDisplayName(upgrade.id);
+          this.params.store.save(this.params.state);
+          return true;
+        }
         return menu("", [["Shop", loc.Blacksmith_Clint_Shop ?? "Shop"], ["Upgrade", loc.Blacksmith_Clint_Upgrade ?? "Upgrade Tools"], ["Leave", loc.Blacksmith_Clint_Leave ?? "Leave"]], (k) => {
           if (k === "Shop") this.openShop("Blacksmith");
-          else if (k === "Upgrade") this.message = "Mejora de herramientas todavía no implementada";
+          else if (k === "Upgrade") this.openShop("ClintUpgrade");
         });
       }
       case "AnimalShop": {
@@ -1654,7 +1666,11 @@ export class World extends Phaser.Scene {
     const data = this.params.shops[id];
     if (!data || !this.shop) return false;
     const gsq = this.gsqState();
-    const stock = shopStock(data, (q, raw) => objectBasePrice(this.params.items.objects, q, raw, gsq.year), { state: gsq, random: daySaveRandom(gsq) }).filter((e) => itemSprite({ id: e.id, stack: 1 }, this.params.items) !== null);
+    const inv = this.params.state.inventory;
+    const queries = {
+      TOOL_UPGRADES: () => toolUpgrades(this.params.items.tools as Record<string, ToolUpgradeInfo>, (q) => inv.some((it) => it?.id === q), (q) => checkConditions(q, { state: gsq, random: daySaveRandom(gsq) })),
+    };
+    const stock = shopStock(data, (q, raw) => objectBasePrice(this.params.items.objects, q, raw, gsq.year), { state: gsq, random: daySaveRandom(gsq) }, queries).filter((e) => itemSprite({ id: e.id, stack: 1 }, this.params.items) !== null);
     this.shop.show(stock);
     return true;
   }
@@ -1671,9 +1687,33 @@ export class World extends Phaser.Scene {
     else if (hit.kind === "buy") {
       const entry = shop.stock[hit.index];
       if (state.money < entry.price || entry.stock <= 0) return;
-      if (addItem(state.inventory, { id: entry.id, stack: 1 })) return;
+      const tradeHave = entry.trade ? state.inventory.reduce((n, it) => n + (it && it.id === entry.trade!.id ? it.stack : 0), 0) : 0;
+      if (entry.trade && tradeHave < entry.trade.count) return;
+      if (entry.requireTool) {
+        if (state.toolUpgrade) return;
+        const slot = state.inventory.findIndex((it) => it?.id === entry.requireTool);
+        if (slot < 0) return;
+        state.inventory[slot] = null;
+        state.toolUpgrade = { id: entry.id, daysLeft: 2 };
+        if (state.currentToolIndex === slot) this.selectSlot(slot);
+      } else if (addItem(state.inventory, { id: entry.id, stack: 1 })) return;
+      if (entry.trade) {
+        let left = entry.trade.count;
+        for (let i = 0; i < state.inventory.length && left > 0; i++) {
+          const it = state.inventory[i];
+          if (!it || it.id !== entry.trade.id) continue;
+          const take = Math.min(left, it.stack);
+          it.stack -= take;
+          left -= take;
+          if (it.stack <= 0) state.inventory[i] = null;
+        }
+      }
       state.money -= entry.price;
       entry.stock--;
+      if (entry.requireTool) {
+        shop.close();
+        this.dialogueBox?.show("Clint", parseDialogue(this.localized(this.params.strings["Strings\\StringsFromCSFiles"]?.["Tool.cs.14317"] ?? ""), state.farmerName, this.appearance.isMale));
+      }
     } else if (hit.kind === "sell") {
       const item = state.inventory[hit.slot];
       if (!item || parseId(item.id).type !== "O") return;
@@ -1767,6 +1807,7 @@ export class World extends Phaser.Scene {
     this.cameras.main.fade(1000, 0, 0, 0, true);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       this.tickMachines(minutesUntilMorning(clock.time));
+      if (state.toolUpgrade && state.toolUpgrade.daysLeft > 0) state.toolUpgrade.daysLeft--;
       const shipped = state.shipping;
       const yesterday = this.dateString(state.dayOfMonth, state.season, state.year);
       for (const item of shipped) {
@@ -1870,6 +1911,7 @@ export class World extends Phaser.Scene {
   private itemDisplayName(qualified: string) {
     const { type, id } = parseId(qualified);
     if (type === "BC") return this.localized(this.params.items.bigCraftables?.[id]?.DisplayName) || id;
+    if (type === "T" || type === "W") return this.localized(((type === "T" ? this.params.items.tools[id] : this.params.items.weapons[id]) as { DisplayName?: string } | undefined)?.DisplayName) || id;
     return this.itemName(qualified);
   }
 
