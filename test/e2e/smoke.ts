@@ -115,6 +115,47 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
+    "abre el regalo, siembra, riega y cosecha una chirivía a los 4 días",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=FarmHouse&x=3&y=9&time=700`);
+      await page.evaluate(`localStorage.clear()`);
+      await page.goto(`${BASE}/?map=FarmHouse&x=3&y=9&time=700`);
+      await waitStatus(page, /FarmHouse .* tile 3,9/);
+      await holdUntil(page, "w", /tile 3,8/);
+      await page.keyboard.press("x");
+      await waitStatus(page, /FarmHouse .* tile/);
+      await new Promise((r) => setTimeout(r, 1500));
+      const seeds = await world(`(w.params.state.inventory[5] || {}).id`);
+      if (seeds !== "(O)472") throw new Error(`El regalo no dio semillas: ${seeds}`);
+      await world(`(w.warpTo("Farm", 24, 10), 1)`);
+      await waitStatus(page, /Farm .* tile 24,10/);
+      await new Promise((r) => setTimeout(r, 800));
+      await world(`(w.body.facing = 0, 1)`);
+      for (const k of ["2", "6", "3"] as const) {
+        await page.keyboard.press(k);
+        await page.keyboard.press("c");
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+      const dirt = (await world(`JSON.stringify(w.dirtAt(24, 9))`)) as string;
+      if (!dirt || !dirt.includes('"seed":"472"') || !dirt.includes('"watered":true')) throw new Error(`No quedó sembrado y regado: ${dirt}`);
+      for (let d = 0; d < 4; d++) {
+        await new Promise((r) => setTimeout(r, 1000));
+        await world(`(w.params.state.locations.Farm.entities.forEach(function (e) { if (e.kind === "hoeDirt") e.watered = true; }), w.endDay(), 1)`);
+        await waitStatus(page, new RegExp(`FarmHouse [\\s\\S]*spring ${d + 2},`));
+      }
+      await world(`(w.warpTo("Farm", 24, 10), 1)`);
+      await waitStatus(page, /Farm .* tile 24,10/);
+      await new Promise((r) => setTimeout(r, 800));
+      await world(`(w.body.facing = 0, 1)`);
+      await page.keyboard.press("x");
+      await new Promise((r) => setTimeout(r, 500));
+      const inv = (await world(`JSON.stringify(w.params.state.inventory)`)) as string;
+      if (!inv.includes('"(O)24"')) throw new Error(`No se cosechó: ${inv}`);
+      await page.screenshot({ path: `${OUT}/harvest.png` });
+    },
+  ],
+  [
     "no atraviesa paredes",
     async (page) => {
       await page.goto(`${BASE}/?map=SeedShop&x=6&y=27`);

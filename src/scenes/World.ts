@@ -863,7 +863,7 @@ export class World extends Phaser.Scene {
     }
     this.warping = true;
     const facing = this.body.facing;
-    this.cameras.main.fadeOut(150, 0, 0, 0);
+    this.cameras.main.fade(150, 0, 0, 0, true);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       this.scene.restart({ ...this.params, start: { location: target, x, y, facing } });
     });
@@ -899,10 +899,10 @@ export class World extends Phaser.Scene {
   }
 
   private endDay() {
-    if (this.endingDay) return;
+    if (this.endingDay || !this.sys.isActive()) return;
     this.endingDay = true;
     const { state, store, clock } = this.params;
-    this.cameras.main.fadeOut(1000, 0, 0, 0);
+    this.cameras.main.fade(1000, 0, 0, 0, true);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       for (const item of state.shipping) {
         const data = this.params.items.objects[parseId(item.id).id];
