@@ -904,7 +904,42 @@ Aproximaciones: sin entrada del granjero propio ni de otros jugadores, sin estad
   - Nombre y título en smallFont, centrados en `x+120`, a `y+311` y `y+341`.
   - Línea `(214,143,84)` de 4 px en `y + 96 + alto/2 + 21`.
 
-Aproximaciones: sin `LevelUpMenu` ni profesiones al final del día (los niveles nuevos quedan en `newLevels`), sin mini-retrato en la pestaña y sin experiencia de pesca, combate, forraje ni animales.
+Aproximaciones: sin mini-retrato en la pestaña y sin experiencia de pesca, combate, forraje ni animales.
+
+## Spec S16: subida de nivel nocturna (`LevelUpMenu`)
+
+**Flujo**:
+- Al terminar el día, con la pantalla en negro y antes de guardar, se muestra un `LevelUpMenu` por cada entrada de `newLevels`, en orden.
+- OK (clic o X) o elegir profesión saca la entrada y pasa a la siguiente. Al terminar se guarda y empieza el día.
+
+**Contenido**:
+- Título `Strings\UI:LevelUp_Title` ("Level {0} {1}"), con el nombre de habilidad de `SkillsPage.cs.11604..9`.
+- Ícono de `TileSheets/BuffsIcons` por habilidad: cultivo (0,0), pesca (16,0), recolección (80,0), minería (32,0), combate (128,16) y suerte (64,0). Va ×4 con sombra (−4,+4) a 0,35, en `(x+56, y+112)` y `(x+w−120, y+112)`.
+- Info extra (`getExtraInfoForLevel`):
+  - Cultivo: Farming1 y Farming2.
+  - Minería, pesca, combate y suerte: una línea cada una.
+  - Recolección: Foraging1, más Foraging2 en el nivel 1 o Foraging3 en los niveles 4 y 8.
+- Recetas nuevas: las de `CraftingRecipes` (campo 4) o `CookingRecipes` (campo 3) con condición `s <Habilidad> <nivel>` (o `<Habilidad> <nivel>`) igual a la habilidad y el nivel.
+  - Texto `LevelUp_NewRecipe` ("New {0} recipe: {1}") con `LearnedRecipe_crafting|cooking`, centrado −64, en `y + (grande ? 38 : 12)`.
+  - Ícono en `(x + w/2 + ancho/2 − 48, y−16)`.
+  - Avance `8 + (grande ? 128 : 64)`.
+- Profesiones:
+  - Nivel 5: `skill·6` y `skill·6+1`.
+  - Nivel 10: `+2/+3` si tiene `skill·6`, o `+4/+5` si no.
+- Recetas iniciales: las marcadas `default` en ambos archivos (`Farmer.LearnDefaultRecipes`).
+
+**Layout**:
+- Fondo negro a 0,5. Cartel `Cursors (363,87,58,22)` ×4 en `(x + w/2 − 116, y−20)`. Caja `drawDialogueBox`.
+- Ancho 768, centrado. Alto `256 + Σ(recetas: 64 o 128) + ⌊líneas·64·3/4⌋`.
+- Info desde `y+176`, cada 48. Botón OK `Cursors (128,256,64,64)` en `(x+w+4, y+h−104)`, acotado a la pantalla.
+- Elección de profesión (ancho 960, alto 512):
+  - Partición horizontal en `y+192` y vertical intersectada (tiles 59, 63 y 62) en `x + w/2 − 32`.
+  - "Choose a profession:" centrado en `y+160`.
+  - Nombre en dialogueFont en `(x+48 | x+16+w/2, y+256)`, verde si el mouse está encima.
+  - Ícono `Cursors ((p mod 6)·16, 624 + ⌊p/6⌋·16)` ×4.
+  - Descripción `LevelUp_ProfessionDescription_<Nombre>` partida en `w/2 − 64|48`.
+
+Aproximaciones: sin estrellitas ni animación de entrada y sin perks inmediatos de profesiones (vida de combate).
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

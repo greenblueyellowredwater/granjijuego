@@ -10,6 +10,8 @@ import { DEPTH } from "../render/tilemap.ts";
 import { FarmerSprite, farmerTextureKeys } from "../render/farmer.ts";
 import { DEFAULT_APPEARANCE, pantsInfo, shirtInfo, type ClothingData } from "../world/farmer-appearance.ts";
 import { GameMenu } from "../render/game-menu.ts";
+import { LevelUpMenu } from "../render/levelup-menu.ts";
+import { extraInfoKeys, learnDefaultRecipes, professionChoices, recipesUnlockedAt } from "../world/levelup.ts";
 import { sortSocialEntries, type SocialEntry } from "../render/social-page.ts";
 import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, parseText, TOOL_CATEGORY_COLOR, type TooltipContent } from "../render/tooltip.ts";
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
@@ -155,6 +157,7 @@ export interface WorldData {
   dialogues: Record<string, Record<string, string>>;
   rainyDialogue: Record<string, string>;
   giftTastes: Record<string, string>;
+  recipes: { crafting: Record<string, string>; cooking: Record<string, string> };
   characters: Record<string, CharacterData>;
   shops: Record<string, ShopData>;
   strings: Record<string, Record<string, string>>;
@@ -206,6 +209,7 @@ export class World extends Phaser.Scene {
   private dialogueBox: DialogueBox | null = null;
   private shop: ShopMenu | null = null;
   private gameMenu: GameMenu | null = null;
+  private levelUp: LevelUpMenu | null = null;
   private menuFarmer: FarmerSprite | null = null;
   private smallFont: SpriteFont | null = null;
   private dialogueFont: SpriteFont | null = null;
@@ -332,7 +336,7 @@ export class World extends Phaser.Scene {
     }
     textures.add(SPRITE_TEXT_TEXTURE);
     textures.add(EMOTE_TEXTURE);
-    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont", "LooseSprites/Cursors2"]) textures.add(t);
+    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont", "LooseSprites/Cursors2", "TileSheets/BuffsIcons", "TileSheets/Craftables"]) textures.add(t);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
     }
@@ -931,12 +935,14 @@ export class World extends Phaser.Scene {
     this.gameMenu = new GameMenu(this, HUD_DEPTH + 40, fontData, this.cache.json.get(TINY_FONT_DATA) as SpriteFontData | undefined, this.cache.json.get(SMALL_FONT_DATA) as SpriteFontData | undefined);
     this.smallFont = this.cache.json.exists(SMALL_FONT_DATA) ? new SpriteFont(this.cache.json.get(SMALL_FONT_DATA) as SpriteFontData) : null;
     this.dialogueFont = fontData ? new SpriteFont(fontData) : null;
+    learnDefaultRecipes(this.params.state, this.params.recipes);
+    this.levelUp = new LevelUpMenu(this, HUD_DEPTH + 60, fontData, this.cache.json.get(SMALL_FONT_DATA) as SpriteFontData | undefined);
     this.menuFarmer = new FarmerSprite(this, this.appearance, this.params.clothing, this.featureXOffset, this.featureYOffset, true);
 
     const kb = this.input.keyboard!;
     this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,X,E") as Record<string, Phaser.Input.Keyboard.Key>;
     kb.on("keydown-C", () => this.useToolButton());
-    kb.on("keydown-X", () => this.interact());
+    kb.on("keydown-X", () => (this.levelUp?.current ? this.finishLevelUp() : this.interact()));
     kb.on("keydown-E", () => this.toggleGameMenu());
     kb.on("keydown-ENTER", () => (this.dialogueBox?.open ? this.dialogueBox.advance() : this.question?.confirm()));
     kb.on("keydown-SPACE", () => this.question?.confirm());
@@ -951,6 +957,12 @@ export class World extends Phaser.Scene {
     for (const k of ["DOWN", "S"]) kb.on(`keydown-${k}`, () => this.question?.move(1));
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (this.levelUp?.current) {
+        const hit = this.levelUp.hit(this.cameras.main.width, this.cameras.main.height, p.x, p.y);
+        if (hit?.kind === "ok") this.finishLevelUp();
+        else if (hit?.kind === "profession") this.finishLevelUp(hit.profession);
+        return;
+      }
       if (this.gameMenu?.open) {
         this.gameMenuClick(p.x, p.y);
         return;
@@ -1394,9 +1406,65 @@ export class World extends Phaser.Scene {
       clock.time = 600;
       clock.interval = 0;
       clock.shakeMs = 0;
-      store.save(state);
-      this.scene.restart({ ...this.params, season: state.season, start: { location: FARMHOUSE, wakeUp: true } });
+      this.runNightMenus(() => {
+        store.save(state);
+        this.scene.restart({ ...this.params, season: state.season, start: { location: FARMHOUSE, wakeUp: true } });
+      });
     });
+  }
+
+  private nightMenusDone: (() => void) | null = null;
+
+  private runNightMenus(done: () => void) {
+    this.nightMenusDone = done;
+    this.nextNightMenu();
+  }
+
+  private nextNightMenu() {
+    const { state, strings, recipes } = this.params;
+    const menu = this.levelUp;
+    const next = state.newLevels[0];
+    if (!menu || !next) {
+      if (menu) menu.current = null;
+      const done = this.nightMenusDone;
+      this.nightMenusDone = null;
+      done?.();
+      return;
+    }
+    this.cameras.main.resetFX();
+    const [skill, level] = next;
+    const ui = strings["Strings\\UI"] ?? {};
+    const skillName = strings["Strings\\StringsFromCSFiles"]?.[["SkillsPage.cs.11604", "SkillsPage.cs.11607", "SkillsPage.cs.11606", "SkillsPage.cs.11605", "SkillsPage.cs.11608", "SkillsPage.cs.11609"][skill]] ?? "";
+    const professions = professionChoices(skill, level, state.professions);
+    const unlocks = professions ? [] : recipesUnlockedAt(skill, level, recipes);
+    menu.current = {
+      skill,
+      level,
+      title: (ui.LevelUp_Title ?? "Level {0} {1}").replace("{0}", String(level)).replace("{1}", skillName),
+      extraInfo: extraInfoKeys(skill, level).map((k) => ui[k] ?? k),
+      recipes: unlocks.map((r) => ({ ...r, label: (ui.LevelUp_NewRecipe ?? "New {0} recipe: {1}").replace("{0}", ui[`LearnedRecipe_${r.cooking ? "cooking" : "crafting"}`] ?? "").replace("{1}", r.displayName ?? this.itemDisplayName(r.output)) })),
+      professions,
+    };
+  }
+
+  private finishLevelUp(profession?: number) {
+    const { state } = this.params;
+    const current = this.levelUp?.current;
+    if (!current) return;
+    if (current.professions && profession === undefined) return;
+    if (profession !== undefined && !state.professions.includes(profession)) state.professions.push(profession);
+    for (const r of current.recipes) {
+      const list = r.cooking ? state.cookingRecipes : state.craftingRecipes;
+      if (!list.includes(r.name)) list.push(r.name);
+    }
+    state.newLevels.shift();
+    this.nextNightMenu();
+  }
+
+  private itemDisplayName(qualified: string) {
+    const { type, id } = parseId(qualified);
+    if (type === "BC") return this.localized(this.params.items.bigCraftables?.[id]?.DisplayName) || id;
+    return this.itemName(qualified);
   }
 
   private simulate() {
@@ -1435,6 +1503,7 @@ export class World extends Phaser.Scene {
     this.shop?.draw(this.cameras.main.width, this.cameras.main.height, (id) => this.itemName(id), state.money, state.inventory, this.params.items, { x: pointer.x, y: pointer.y }, (item) => parseId(item.id).type === "O" && (this.params.items.objects[parseId(item.id).id]?.Price ?? 0) > 0);
     const speaker = this.dialogueBox?.speaker ? `Portraits/${this.dialogueBox.speaker}` : null;
     this.drawGameMenu(pointer);
+    this.levelUp?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items, this.params.strings["Strings\\UI"] ?? {}, { x: pointer.x, y: pointer.y });
     this.dialogueBox?.draw(this.cameras.main.width, this.cameras.main.height, speaker && this.textures.exists(speaker) ? speaker : null);
     this.hud?.draw(
       {

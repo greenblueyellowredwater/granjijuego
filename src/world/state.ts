@@ -28,6 +28,9 @@ export interface GameState {
   totalEarned: number;
   experience: number[];
   newLevels: [number, number][];
+  professions: number[];
+  craftingRecipes: string[];
+  cookingRecipes: string[];
   appearance?: Appearance;
   locations: Record<string, { entities: Entity[] }>;
 }
@@ -56,6 +59,9 @@ export function newGameState(random = Math.random): GameState {
     totalEarned: 0,
     experience: [0, 0, 0, 0, 0, 0],
     newLevels: [],
+    professions: [],
+    craftingRecipes: [],
+    cookingRecipes: [],
     appearance: DEFAULT_APPEARANCE,
     locations: {},
   };
@@ -82,6 +88,9 @@ export function withDefaults(state: GameState): GameState {
     totalEarned: state.totalEarned ?? 0,
     experience: state.experience ?? [0, 0, 0, 0, 0, 0],
     newLevels: state.newLevels ?? [],
+    professions: state.professions ?? [],
+    craftingRecipes: state.craftingRecipes ?? [],
+    cookingRecipes: state.cookingRecipes ?? [],
   };
 }
 

@@ -8,6 +8,7 @@ export interface ItemData {
   tools: Record<string, { Texture?: string | null; SpriteIndex: number; MenuSpriteIndex?: number; ClassName?: string; UpgradeLevel?: number }>;
   weapons: Record<string, { Texture?: string | null; SpriteIndex: number; Type?: number }>;
   objects: Record<string, { Texture?: string | null; SpriteIndex: number; Category?: number; Price?: number; Type?: string; Name?: string; Edibility?: number }>;
+  bigCraftables?: Record<string, { Texture?: string | null; SpriteIndex: number; Name?: string; DisplayName?: string; Description?: string; Price?: number }>;
   textureWidths: Record<string, number>;
 }
 
@@ -41,6 +42,13 @@ export function itemSprite(item: Item, data: ItemData) {
     if (!w) return null;
     const texture = normalize(w.Texture ?? "TileSheets/weapons");
     return { texture, ...square(w.SpriteIndex, data.textureWidths[texture] ?? 128) };
+  }
+  if (type === "BC") {
+    const b = data.bigCraftables?.[id];
+    if (!b) return null;
+    const texture = normalize(b.Texture ?? "TileSheets/Craftables");
+    const w = data.textureWidths[texture] ?? 128;
+    return { texture, sx: (b.SpriteIndex * 16) % w, sy: Math.floor((b.SpriteIndex * 16) / w) * 32, sw: 16, sh: 32 };
   }
   const o = data.objects[id];
   if (!o) return null;

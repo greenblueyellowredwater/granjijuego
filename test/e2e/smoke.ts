@@ -181,6 +181,30 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
+    "muestra la subida de nivel al dormir y elige profesión",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=FarmHouse&x=3&y=9&time=900`);
+      await page.evaluate(`localStorage.clear()`);
+      await page.goto(`${BASE}/?map=FarmHouse&x=3&y=9&time=900`);
+      await waitStatus(page, /FarmHouse .* tile 3,9/);
+      await world(`(w.params.state.newLevels = [[0, 1], [2, 5]], w.endDay(), 1)`);
+      for (let i = 0; i < 150 && !(await world(`!!(w.levelUp && w.levelUp.current)`)); i++) await new Promise((r) => setTimeout(r, 100));
+      if ((await world(`w.levelUp.current.title`)) !== "Level 1 Farming") throw new Error("No apareció el nivel 1 de cultivo");
+      await page.screenshot({ path: `${OUT}/level-up.png` });
+      await page.keyboard.press("x");
+      await new Promise((r) => setTimeout(r, 300));
+      if (!(await world(`!!w.levelUp.current.professions`))) throw new Error("No apareció la elección de profesión");
+      await page.mouse.click(400, 450);
+      for (let i = 0; i < 150; i++) {
+        if (await world(`w.sys.isActive() && !w.endingDay && w.params.state.dayOfMonth === 2`)) break;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      const r = (await world(`JSON.stringify({ p: w.params.state.professions, nl: w.params.state.newLevels.length, sc: w.params.state.craftingRecipes.indexOf("Scarecrow") >= 0, day: w.params.state.dayOfMonth })`)) as string;
+      if (r !== '{"p":[12],"nl":0,"sc":true,"day":2}') throw new Error(`Estado tras la noche: ${r}`);
+    },
+  ],
+  [
     "abre el regalo, siembra, riega y cosecha una chirivía a los 4 días",
     async (page) => {
       const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);

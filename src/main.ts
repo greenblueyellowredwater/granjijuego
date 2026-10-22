@@ -161,6 +161,10 @@ async function boot() {
   const rainyDialogue = (await load("Characters/Dialogue/rainy").catch(() => ({}))) as Record<string, string>;
   const toolStrings = (await load("Strings/Tools").catch(() => ({}))) as Record<string, string>;
   const weaponStrings = (await load("Strings/Weapons").catch(() => ({}))) as Record<string, string>;
+  const bigCraftables = (await load("Data/BigCraftables").catch(() => ({}))) as ItemData["bigCraftables"];
+  const craftingRecipes = (await load("Data/CraftingRecipes").catch(() => ({}))) as Record<string, string>;
+  const cookingRecipes = (await load("Data/CookingRecipes").catch(() => ({}))) as Record<string, string>;
+  const bigCraftableStrings = (await load("Strings/BigCraftables").catch(() => ({}))) as Record<string, string>;
   const npcNameStrings = (await load("Strings/NPCNames").catch(() => ({}))) as Record<string, string>;
   const uiStrings = (await load("Strings/UI").catch(() => ({}))) as Record<string, string>;
   const giftTastes = (await load("Data/NPCGiftTastes").catch(() => ({}))) as Record<string, string>;
@@ -208,11 +212,13 @@ async function boot() {
     giftTastes,
     characters: Object.fromEntries(npcNames.map((n) => [n, characters[n]])),
     shops,
-    strings: { "Strings\\Objects": objectStrings, "Strings\\StringsFromCSFiles": csStrings, "Strings\\Locations": locationStrings, "Strings\\UI": uiStrings, "Strings\\Tools": toolStrings, "Strings\\Weapons": weaponStrings, "Strings\\NPCNames": npcNameStrings },
+    strings: { "Strings\\Objects": objectStrings, "Strings\\StringsFromCSFiles": csStrings, "Strings\\Locations": locationStrings, "Strings\\UI": uiStrings, "Strings\\Tools": toolStrings, "Strings\\Weapons": weaponStrings, "Strings\\NPCNames": npcNameStrings, "Strings\\BigCraftables": bigCraftableStrings },
+    recipes: { crafting: craftingRecipes, cooking: cookingRecipes },
     items: {
       tools,
       weapons,
       objects: objects as ItemData["objects"],
+      bigCraftables,
       textureWidths: Object.fromEntries(Object.entries(manifest.textures).map(([k, v]) => [k, v.width])),
     },
     locations,
