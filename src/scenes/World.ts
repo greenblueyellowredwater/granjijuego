@@ -34,6 +34,8 @@ import {
 import { addItem, consumeOne } from "../world/items.ts";
 import { afterHarvest, cropDrawMath, harvestQuality, isHarvestable, isInSeason, newCrop, type CropData } from "../world/crops.ts";
 import { dayUpdateLocations } from "../world/day.ts";
+import { debrisDrops, debrisKind, spawnDebris, stepDebris, toolBreaks, type ItemDebris } from "../world/debris.ts";
+import { itemSprite } from "../world/items.ts";
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canTill, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
@@ -170,6 +172,8 @@ export class World extends Phaser.Scene {
   private message = "";
   private warping = false;
   private running = true;
+  private entityImages = new Map<Entity, Phaser.GameObjects.Image[]>();
+  private drops: { d: ItemDebris; img: Phaser.GameObjects.Image | null; shadow: Phaser.GameObjects.Image | null }[] = [];
   private fadingTrees: { rect: Rect; alpha: number; images: Phaser.GameObjects.Image[] }[] = [];
   private water: { grid: WaterGrid; state: WaterState; tint: number; alpha: number; pool: Phaser.GameObjects.Image[] } | null = null;
   private ticks = 0;
@@ -208,6 +212,8 @@ export class World extends Phaser.Scene {
     this.accumulator = 0;
     this.animator = new FarmerAnimator();
     this.fadingTrees = [];
+    this.entityImages = new Map();
+    this.drops = [];
     this.water = null;
     this.ticks = 0;
     this.lightSources = [];
@@ -320,12 +326,62 @@ export class World extends Phaser.Scene {
     };
     for (const e of entities) {
       const ops = e.kind === "building" ? this.buildingOps(e) : drawOps(e, this.params.terrain, this.params.season, grass);
-      const images = ops
-        .map((op) => ({ op, image: this.addDrawOp(op) }))
-        .filter((x) => x.op.fades && x.image)
-        .map((x) => x.image!);
+      const all = ops.map((op) => ({ op, image: this.addDrawOp(op) }));
+      this.entityImages.set(e, all.map((x) => x.image).filter((i): i is Phaser.GameObjects.Image => i !== null));
+      const images = all.filter((x) => x.op.fades && x.image).map((x) => x.image!);
       const rect = e.kind === "tree" ? treeFadeRect(e) : null;
       if (rect && images.length) this.fadingTrees.push({ rect, alpha: 1, images });
+    }
+  }
+
+  private removeEntity(e: Entity) {
+    const i = this.entities.indexOf(e);
+    if (i >= 0) this.entities.splice(i, 1);
+    for (const img of this.entityImages.get(e) ?? []) img.destroy();
+    this.entityImages.delete(e);
+    this.location.setSolids(this.entities.flatMap((x) => this.solidsOf(x)));
+  }
+
+  private dropItems(ids: string[], tx: number, ty: number) {
+    for (const id of ids) this.drops.push({ d: spawnDebris(`(O)${id}`, tx, ty), img: null, shadow: null });
+  }
+
+  private hitObjectAt(tx: number, ty: number, tool: string) {
+    const obj = this.entities.find((e): e is Extract<Entity, { kind: "object" }> => e.kind === "object" && e.x === tx && e.y === ty);
+    if (!obj) return false;
+    const data = this.params.items.objects[obj.itemId] as { Name?: string; Category?: number } | undefined;
+    const kind = debrisKind(data?.Name, data?.Category);
+    if (!toolBreaks(kind, tool)) return false;
+    this.removeEntity(obj);
+    this.dropItems(debrisDrops(kind), tx, ty);
+    if (kind !== "weeds") this.temps.push(animationSprite(12, tx * TILE, ty * TILE, 8, Math.random() < 0.5, 50));
+    return true;
+  }
+
+  private updateDrops() {
+    const b = farmerBox(this.body.x, this.body.y);
+    const target = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+    this.drops = this.drops.filter((p) => {
+      if (!stepDebris(p.d, target)) return true;
+      const rest = addItem(this.params.state.inventory, { id: p.d.id, stack: 1 });
+      if (rest) return true;
+      p.img?.destroy();
+      p.shadow?.destroy();
+      return false;
+    });
+  }
+
+  private drawDrops() {
+    for (const p of this.drops) {
+      const sprite = itemSprite({ id: p.d.id, stack: 1 }, this.params.items);
+      if (!sprite || !this.textures.exists(sprite.texture)) continue;
+      const tex = this.textures.get(sprite.texture);
+      const frame = `${sprite.sx},${sprite.sy},${sprite.sw},${sprite.sh}`;
+      if (!tex.has(frame)) tex.add(frame, 0, sprite.sx, sprite.sy, sprite.sw, sprite.sh);
+      p.img ??= this.add.image(0, 0, sprite.texture, frame).setScale(PIXEL_SCALE);
+      p.shadow ??= this.add.image(0, 0, SHADOW_TEXTURE).setScale(3).setAlpha(0.5);
+      p.img.setPosition(p.d.x, p.d.y - 16 - p.d.z).setDepth(this.rendered.spriteDepth((p.d.y + 32) / 10000));
+      p.shadow.setPosition(p.d.x, p.d.y + 8).setDepth(this.rendered.spriteDepth(1e-6));
     }
   }
 
@@ -429,6 +485,7 @@ export class World extends Phaser.Scene {
     const item = this.params.state.inventory[this.params.state.currentToolIndex];
     if (!item) return null;
     const { type, id } = parseId(item.id);
+    if (type === "W" && id === "47") return { kind: "scythe" as ToolKind, initial: -1, texture: "TileSheets/weapons" };
     if (type !== "T") return null;
     const data = this.params.items.tools[id];
     if (!data) return null;
@@ -521,6 +578,16 @@ export class World extends Phaser.Scene {
     if (b !== "useTool" || !this.tool) return;
     const state = this.params.state;
     const tx = Math.floor(this.tool.target.x / TILE), ty = Math.floor(this.tool.target.y / TILE);
+    if (this.tool.kind === "scythe") {
+      this.hitObjectAt(tx, ty, "scythe");
+      const grass = this.entities.find((e) => e.kind === "grass" && e.x === tx && e.y === ty);
+      if (grass) this.removeEntity(grass);
+      return;
+    }
+    if (this.hitObjectAt(tx, ty, this.tool.kind)) {
+      state.stamina -= toolStaminaCost(1, 0);
+      return;
+    }
     if (this.tool.kind === "hoe") {
       state.stamina -= toolStaminaCost(1, 0);
       if (canTill(this.location, tx, ty, (x, y) => this.occupied(x, y))) {
@@ -862,6 +929,7 @@ export class World extends Phaser.Scene {
     const pressed = this.pressed();
     if (!this.canMove) pressed.clear();
     this.tickTool();
+    this.updateDrops();
     const before = { x: this.body.x, y: this.body.y };
     this.running = !this.keys.SHIFT.isDown;
     const result = step(this.location, this.body, pressed, this.running, TICK_MS);
@@ -952,6 +1020,7 @@ export class World extends Phaser.Scene {
     this.updateCamera();
     this.drawWater();
     this.redrawDirt();
+    this.drawDrops();
     this.drawTemps(delta);
     this.drawLightingAndHud(time);
 

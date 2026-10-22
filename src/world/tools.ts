@@ -84,7 +84,7 @@ export class SingleAnimation {
   }
 }
 
-export type ToolKind = "hoe" | "axe" | "pickaxe" | "wateringCan" | "other";
+export type ToolKind = "hoe" | "axe" | "pickaxe" | "wateringCan" | "scythe" | "other";
 
 export function toolKind(className: string | undefined): ToolKind {
   switch (className) {
@@ -126,6 +126,7 @@ export interface ToolDraw {
 const D15 = 0.2617994, D45 = 0.7853982, D105 = 1.832596, D7_5 = 0.1308997, POWER_TILT = 0.04908739;
 
 export function toolDrawTransform(kind: ToolKind, facing: Facing, idx: number, power = 0): ToolDraw | null {
+  if (kind === "scythe" || kind === "other") return null;
   const p = Math.min(8, power * 4);
   if (kind === "wateringCan") {
     const l6 = 80;

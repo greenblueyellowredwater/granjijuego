@@ -117,7 +117,7 @@ Cambio de día: `NewDay` → `newDayAfterFade` → clima, `GameLocation.DayUpdat
 | 2 | Caminar por el pueblo: colisión (`Passable`/Buildings), warps, cámara, sprite del granjero | **hecho** (spec S2) |
 | 2b | Vegetación y objetos de `Paths`, agua animada, orden de dibujo por lotes | **hecho** (specs S3 y S4) |
 | 3 | Reloj, días, estaciones, iluminación, HUD, sueño y clima | **hecho** (specs S6 y S7) |
-| 4 | Granja básica: azada, regadera, HoeDirt, cultivos, inventario, shipping | |
+| 4 | Granja básica: azada, regadera, HoeDirt, cultivos, inventario, shipping | **hecho** en lo básico (spec S8) |
 | 5 | GameStateQuery, ItemQuery, tiendas, máquinas | |
 | 6 | NPCs: schedules, pathfinding, diálogo, regalos | |
 | 7 | Eventos y TokenParser | |
@@ -466,6 +466,75 @@ Banderas: `Rain` → lluvia; `Storm` → lluvia y rayos; `Wind` → viento con h
   - `globalWind` vale −0,25. En otoño, con probabilidad 0,001 arranca una ráfaga que crece ×1,02 hasta −5 y después vuelve a −0,5 a razón de 0,015 por tick.
 
 **Ícono del HUD:** sale de las banderas (ver S6).
+
+## Spec S8: granja básica (herramientas, tierra, cultivos, edificios y envíos)
+
+Fuente: `Farmer.initialTools`, `FarmHouse.AddStarterGiftBox`, `Toolbar.draw`, `IClickableMenu.drawTextureBox`, `Tool/Object/MeleeWeapon.drawInMenu`, `Item.DrawMenuIcons`, `Utility.drawTinyDigits`, `Tool.beginUsing`, `Tool.endUsing`, `Tool.Update`, `FarmerSprite.animateOnce`, `currentAnimationTick`, `getAnimationFromIndex` (casos 160–191), `AnimationFrame..ctor`, `Game1.drawTool`, `FarmerRenderer.GetLayerDepth`, `Character.GetToolLocation`, `Hoe.DoFunction`, `GameLocation.makeHoeDirt`, `HoeDirt` (`DrawOptimized`, `updateNeighbors`, `populateDrawGuide`, `dayUpdate`), `GameLocation.DayUpdate` y `GetDirtDecayChance`, `Crop` (`.ctor`, `newDay`, `updateDrawMath`, `getSourceRect`, `harvest`), `Object.performToolAction`, `cutWeed`, `GameLocation.OnStoneDestroyed`, `breakStone`, `Farm.AddDefaultBuildings` y sus ubicaciones, `Building` (`draw`, `drawShadow`, `getSourceRect`), `Data/Buildings`, `ShippingBin` (`initLid`, `leftClicked`, `doAction`), `Object.sellToStorePrice` y `Game1.drawHUD` (barra de energía).
+
+**Inventario inicial:** hacha, azada, regadera, pico y guadaña `(W)47`, en 12 casilleros. En la casa hay una caja de regalo en (3,7) (`FarmHouseStarterSeedsPosition` de la granja) con 15 semillas de chirivía `(O)472`. Se dibuja desde `LooseSprites/Giftbox (0, 32·índice, 16, 32)` en `(x·64, y·64−52)`, con una sombra ×5 en +(16,53).
+
+**Toolbar:**
+- Va abajo, salvo que el jugador esté por debajo de la mitad de la pantalla + 64; en ese caso va arriba (y = 112).
+- Caja `drawTextureBox(MenuTiles (0,256,60,60))` de 800×96 en `(anchoUI/2 − 400, y − 104)`. El 9‑slice usa esquinas de ancho/3.
+- Casilleros `MenuTiles` tile 10, o 56 si está elegido, en `(anchoUI/2 − 384 + 64i, y − 88)`. Etiquetas «1…0 - =» con `tinyFont` en `DimGray`.
+- Los ítems se dibujan con origen en su centro, en +(32,32), a escala 4·s (s = 0,9 si está elegido, 0,8 si no). Los objetos llevan sombra (`shadow` ×3 a 0,5 de alfa en +(32,48)).
+- La pila se dibuja con dígitos `Cursors (368+5d, 56, 5, 7)` a escala 3s y la calidad con estrellas `(338+8(q−1), 400)` o `(346,392)`.
+
+**Uso de herramientas** (botón C o clic izquierdo; con el mouse vale cualquier tile a un tile del jugador). Las herramientas básicas animan al soltar. Hay tres secuencias:
+- **Golpe** (`animateOnce` con frames 160/168/176/184): abajo 66(150), 67(40, barrido), 68(40, **usa la herramienta al empezar**), 69(170+30·poder), 70(75). Derecha e izquierda (espejado) 48(100), 49, 50, 51(220+30p), 52. Arriba 36, 37, 38, 63, 62.
+- **Riego** (frames 164/172/180/188): 54/58/62 durante 0 y 75 ms, luego 55/59/63 durante 100 ms (**usa al terminar**), luego 25/45/46 durante 500 ms. A los lados y arriba, ese último frame usa el brazo secundario (columna de brazos +12 en vez de +6).
+- **Avance:** el frame avanza cuando el temporizador supera su duración, en ticks de 16 ms.
+- **Sprite de la herramienta:** se toma de `TileSheets/tools` como `(i·16 mod ancho, ⌊i·16/ancho⌋·16, 16, 32)`, con `i = SpriteIndex` + desplazamiento.
+  - Desplazamiento: abajo +0 (+1 desde el frame 2), arriba +3 (+4 desde el frame 1), costados +2. La regadera básica usa +4 arriba, +2 a los costados y +0 abajo.
+- **Posición y rotación:** las de `Game1.drawTool` para cada dirección y frame (tabla en `src/world/tools.ts`), con origen (0,16) o (0,32) y espejado a la izquierda.
+- **Profundidad de la herramienta:** la del granjero +1e‑6 mirando arriba, +15e‑6 abajo y +0,0032 a los costados. Las capas del granjero van a +k·1e‑6.
+- **Tile objetivo con teclado:** a 48 px del borde de la caja del granjero, en la dirección en que mira.
+- **Energía:** cada uso cuesta `2·poder − nivel·0,1`; la guadaña no gasta. La regadera tiene 40 de agua, gasta 1 por uso y se rellena en el agua.
+
+**Azada.** Si el tile del `Back` es `Diggable`, está libre y es transitable, se crea `HoeDirt` (regado si llueve en un exterior), con la animación de tierra `animations` fila 12, 8 cuadros de 50 ms.
+
+**HoeDirt:**
+- Se dibuja con `hoeDirt`, `hoeDirtDark` (Mountain/Mine) o `hoeDirtSnow` (invierno).
+- El tile se elige con la máscara de vecinos (N=1, E=2, S=4, O=8) y la tabla `{0:0, 8:15, 2:13, 1:12, 4:4, 9:11, 3:9, 5:8, 6:1, 12:3, 10:14, 7:5, 15:6, 13:7, 11:10, 14:2}`. El rectángulo es `(p mod 4·16, ⌊p/4⌋·16)`.
+- Si está regado se agrega otra capa con +64 en X y máscara de vecinos regados. Profundidades 1e‑8 y 1,2e‑8.
+
+**Día nuevo:**
+1. Cada cultivo crece si su tierra estaba regada.
+2. La tierra se seca.
+3. La tierra vacía desaparece con probabilidad `DirtDecayChance`: 0,1 en la granja, 0 en el invernadero, 1 en el resto.
+4. Si hoy llueve, se riega toda la tierra exterior.
+
+**Cultivos** (`Data/Crops`, por id de semilla):
+- **Plantar:** solo en tierra sin cultivo y en temporada (si no, aparece «Out of season.»). `phaseDays = DaysInPhase + [99999]`, `flip` al azar.
+- **Crecimiento:** sube `dayOfCurrentPhase` hasta el largo de la fase y pasa a la siguiente; las fases de 0 días se saltean. Fuera de temporada (exterior) el cultivo muere; en invierno se destruye.
+- **Dibujo:**
+  - Rectángulo `(min(240, col·16 + (fila impar ? 128 : 0)), ⌊fila/2⌋·32, 16, 32)`, con `col = fase + 1`. En la fase 0, `col = 0` si `7x + 11y` es par. Si está maduro y vuelve a crecer, `col` es 6 o 7.
+  - Se dibuja con origen (8,24) en `(x·64+32, y·64+32+jy)`, con `jy = (11y+7x) mod 10 − 5` mientras crece, y profundidad `(y·64+32)/10000`.
+- **Cosecha** (botón de acción): calidad con `CreateRandom(7x, 11y, daysPlayed, uniqueId)`: oro con `0,2·(nivel/10) + 0,01` y plata con el doble (máx. 0,75); también la cantidad por datos. Si `RegrowDays > 0` queda maduro con esos días; si no, se elimina con las animaciones 17 y 14.
+
+**Escombros.** Piedra (`Stone`, cat. −999) con pico, rama (`Twig`) con hacha, yuyos (`*Weeds*`) con azada, hacha, pico o guadaña. Sueltan:
+- Piedra: 390 × (1–2) (`breakStone`, sin bonos de nivel).
+- Rama: madera 388.
+- Yuyos: fibra 771 con probabilidad 0,5.
+
+Los objetos sueltos rebotan y, a menos de 128 px, vuelan al granjero y entran al inventario. Esto es una aproximación de `Debris`.
+
+**Edificios de la granja** (`Farm.AddDefaultBuildings`):
+- **Ubicación:** casa en `FarmHouseEntry − (5,3)` (por defecto (64,15)), invernadero en `GreenhouseLocation` o (25,10), caja de envíos en (71,14) y bebedero en (53,7).
+- **Dibujo:** cada edificio va en `(x·64, (y+alto)·64) + DrawOffset·4`, con origen abajo a la izquierda, escala 4 y profundidad `((y+alto)·64 − SortTileOffset·64)/10000`.
+  - Sombra: `Cursors (656|672|688, 394)` a lo ancho del borde inferior.
+  - `DrawLayers`: en la esquina superior + `DrawPosition·4`, con profundidad +1/10000. Las de fondo van a profundidad 0.
+  - La casa usa la fila del nivel de mejora. El invernadero muestra las ruinas (y − alto) hasta tener `ccPantry`.
+- **Colisión:** `CollisionMap` (`X` bloquea) o todo el rectángulo.
+- **Puertas:** `HumanDoor` lleva a la casa (3,11). El invernadero roto muestra `Farm_GreenhouseRuins`.
+- **Caja de envíos:** tapa `Cursors (134,226,30,25)` en `(x·64+4, (y−1)·64−28)` con profundidad `(y+1)·64/10000 + 0,0001`. Con un objeto vendible en la mano, a ≤ 2 tiles de la caja, se envía la pila entera. A la noche se cobra `⌊precio·(1 + 0,25·calidad)⌋` por unidad.
+
+**Barra de energía:**
+- Posición: `(anchoUI − 56, altoUI − 240 − (máx − 270)·0,625)`, armada con las tres piezas `Cursors (256, 408|424|448, 12, 16)`.
+- Relleno de alto `energía·0,625 − 1` en `(x+12, y+48+máx·0,625 − energía·0,625)`.
+- Color de rojo a verde: R = 255 si p ≤ 0,5 y si no `(1−p)·510`; G = `min(255, p·510)`. Lleva una franja superior de 4 px con R y G −50.
+
+Pendiente: animación de la guadaña (`MeleeWeapon`), árboles con hacha, animación de cosecha (279+dirección) y de apertura del regalo, menú de envíos nocturno, experiencia y niveles, y fertilizantes.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
