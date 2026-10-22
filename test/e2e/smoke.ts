@@ -141,12 +141,15 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       const g = JSON.parse(gift);
       if (g.f?.points !== 45 || g.f.giftsToday !== 1 || !g.open || !g.portrait || g.left !== 1) throw new Error(`Regalo inesperado: ${gift}`);
       await page.screenshot({ path: `${OUT}/gift.png` });
-      for (let i = 0; i < 10 && (await world(`w.dialogueBox.open`)); i++) {
+      for (let i = 0; i < 30 && (await world(`w.dialogueBox.open`)); i++) {
         await page.keyboard.press("x");
         await new Promise((r) => setTimeout(r, 150));
       }
-      await page.keyboard.press("x");
       await new Promise((r) => setTimeout(r, 300));
+      for (let i = 0; i < 5 && !(await world(`w.dialogueBox.open && w.dialogueBox.portraitless`)); i++) {
+        await page.keyboard.press("x");
+        await new Promise((r) => setTimeout(r, 300));
+      }
       const again = (await world(`JSON.stringify({ text: w.dialogueBox.open && w.dialogueBox.portraitless ? w.dialogueBox.pages[0].text : null, left: w.params.state.inventory[6].stack })`)) as string;
       if (again !== '{"text":"You\'ve already given Pierre a gift today.","left":1}') throw new Error(`Segundo regalo: ${again}`);
     },
