@@ -139,11 +139,19 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       }
       const dirt = (await world(`JSON.stringify(w.dirtAt(24, 9))`)) as string;
       if (!dirt || !dirt.includes('"seed":"472"') || !dirt.includes('"watered":true')) throw new Error(`No quedó sembrado y regado: ${dirt}`);
+      const settled = async (day: number) => {
+        for (let i = 0; i < 150; i++) {
+          if (await world(`w.sys.isActive() && !w.endingDay && w.body !== undefined && w.params.state.dayOfMonth === ${day}`)) return;
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        throw new Error(`No llegó al día ${day}`);
+      };
       for (let d = 0; d < 4; d++) {
-        await new Promise((r) => setTimeout(r, 1000));
+        await settled(d + 1);
+        await new Promise((r) => setTimeout(r, 500));
         await world(`(w.params.state.locations.Farm.entities.forEach(function (e) { if (e.kind === "hoeDirt") e.watered = true; }), w.endDay(), 1)`);
-        await waitStatus(page, new RegExp(`FarmHouse [\\s\\S]*spring ${d + 2},`));
       }
+      await settled(5);
       await world(`(w.warpTo("Farm", 24, 10), 1)`);
       await waitStatus(page, /Farm .* tile 24,10/);
       await new Promise((r) => setTimeout(r, 800));
