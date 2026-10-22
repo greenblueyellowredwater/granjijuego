@@ -128,6 +128,15 @@ export class Location {
     return next;
   }
 
+  placeTile(layer: string, x: number, y: number, sheet: string, index: number) {
+    const l = this.layers.get(layer);
+    const ts = this.map.tilesets.find((t) => t.name === sheet);
+    if (!l || !ts || !this.inBounds(x, y)) return null;
+    const gid = ts.firstgid + index;
+    l.layer.data[y * l.layer.width + x] = gid;
+    return gid;
+  }
+
   tileProps(layer: string, x: number, y: number): Props | null {
     const gid = this.tile(layer, x, y);
     if (!gid) return null;

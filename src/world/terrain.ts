@@ -32,7 +32,7 @@ export interface TerrainData {
 export type Entity =
   | { kind: "tree"; x: number; y: number; treeId: string; stage: number; flipped: boolean; health?: number; stump?: boolean }
   | { kind: "fruitTree"; x: number; y: number; treeId: string; stage: number }
-  | { kind: "object"; x: number; y: number; itemId: string; placed?: boolean }
+  | { kind: "object"; x: number; y: number; itemId: string; placed?: boolean; hp?: number; flipped?: boolean; spawned?: boolean }
   | { kind: "bigCraftable"; x: number; y: number; itemId: string; items?: (Item | null)[]; machine?: { held?: Item | null; minutesLeft?: number; ready?: boolean; showNext?: boolean } }
   | { kind: "clump"; x: number; y: number; index: number; w: number; h: number }
   | { kind: "bush"; x: number; y: number; size: number; flipped: boolean; townBush: boolean; drawShadow: boolean }
@@ -344,7 +344,7 @@ export function drawOps(e: Entity, data: TerrainData, season: SeasonName, grass?
       const i = obj.SpriteIndex;
       return [
         standardShadow(px + 32, py + 55, (py + TILE) / 15000),
-        { texture: obj.Texture?.replace(/\\/g, "/") ?? SPRING_OBJECTS, sx: (i % 24) * 16, sy: Math.floor(i / 24) * 16, sw: 16, sh: 16, x: px, y: py, depth: (py + 32) / 10000, flip: false },
+        { texture: obj.Texture?.replace(/\\/g, "/") ?? SPRING_OBJECTS, sx: (i % 24) * 16, sy: Math.floor(i / 24) * 16, sw: 16, sh: 16, x: px, y: py, depth: (py + 32) / 10000, flip: !!e.flipped },
       ];
     }
     case "bigCraftable": {

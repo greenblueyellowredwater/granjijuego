@@ -375,6 +375,36 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       if (x < 2) throw new Error(`Atravesó la pared: ${s}`);
     },
   ],
+  [
+    "baja a las minas, rompe la última piedra, desciende por la escalera y sale",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=Mine&x=23&y=10`);
+      await waitStatus(page, /Mine .* tile 23,10/);
+      await holdUntil(page, "w", /Enfrente: Mine/);
+      await page.keyboard.press("x");
+      await waitStatus(page, /UndergroundMine1 \(Maps\/Mines\/1\)/);
+      await settle();
+      await page.screenshot({ path: `${OUT}/mine1.png` });
+      const stone = (await world(`(() => { const s = w.entities.find((e) => e.kind === "object" && e.hp !== undefined && w.location.tile("Back", e.x, e.y - 1) && !w.location.tile("Buildings", e.x, e.y - 1) && !w.entities.some((o) => o.x === e.x && o.y === e.y - 1)); w.mine.stonesLeft = 1; w.mine.ladderHasSpawned = false; s.hp = 1; w.body.x = s.x * 64; w.body.y = (s.y - 1) * 64 + 16; w.body.facing = 2; return { x: s.x, y: s.y }; })()`)) as { x: number; y: number };
+      await page.keyboard.press("4");
+      for (let i = 0; i < 6 && (await world(`w.entities.some((e) => e.x === ${stone.x} && e.y === ${stone.y})`)); i++) {
+        await page.keyboard.press("c");
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      if (!(await world(`w.mine.ladderHasSpawned && w.location.tileIndexOnSheet("Buildings", ${stone.x}, ${stone.y}, "mine") === 173`))) throw new Error("No apareció la escalera");
+      await settle();
+      await page.screenshot({ path: `${OUT}/mine-ladder.png` });
+      await page.keyboard.press("x");
+      await waitStatus(page, /UndergroundMine2 /);
+      await settle();
+      await hold(page, "w", 150);
+      await page.keyboard.press("x");
+      await waitStatus(page, /Pregunta abierta/);
+      await page.keyboard.press("Enter");
+      await waitStatus(page, /^Mine .* tile 23,8/m);
+    },
+  ],
 ];
 
 if (!CHROME) throw new Error("No encontré Chrome; definí CHROME_PATH");

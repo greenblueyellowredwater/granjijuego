@@ -1221,6 +1221,161 @@ Aproximaciones:
 - Sin estaciones de `FishAreaId` ni suerte diaria.
 - Willy no regala la caña (la de entrenamiento se compra a 25g).
 
+## Spec S24: minas (`MineShaft`)
+
+**Entrada y salida**:
+- La acción `Mine` del mapa `Mine` (tile 23,9) lleva al nivel 1. Cada nivel es la ubicación `UndergroundMine<N>`.
+- El granjero aparece bajo la escalera de subida: el primer tile 115 de `Buildings` (hoja `mine`), una fila más abajo.
+- Tile 173 en `Buildings` baja al nivel N+1.
+- Tile 115 pregunta `" "` con `Mines_LeaveMine` / `Mines_DoNothing`. Salir lleva a `Mine` (23,8) mirando arriba.
+- Los niveles no se guardan. El generador usa `new Random()` sin semilla, así que cada visita es distinta.
+- Se guarda `deepestMineLevel` y, al llegar al 120, `timesReachedMineBottom`.
+
+**Área** `getMineArea`:
+- 0 para niveles 1–10 y 30–39.
+- 10 para 11–29.
+- 40 para 40–79.
+- 80 para 80–120.
+- 121 a partir de ahí (Skull Cavern, sin implementar).
+
+**Mapa** `Maps/Mines/<n>`:
+- Si `N%40%20 == 0` y `N%40 != 0`, n = 20. Si no, n = N cuando `N%10 != 0`, o 10 en caso contrario.
+- Después n %= 40. El nivel 120 usa el mapa 120.
+- La textura `mine` se reemplaza según el área:
+  - Área 40: `mine_frost`, con `_dark` desde el 70.
+  - Área 80: `mine_lava`, con `_dark` desde el 110 salvo el 120.
+  - Mapa 45: siempre oscuro (`mine_dark` o sufijo `_dark`).
+- `isDarkArea` = (textura oscura o `N%40 > 30`) y área ≠ 40.
+
+**Iluminación** (`chooseLevelType`, con `CreateDaySaveRandom(díasJugados, N, 4N)`):
+- Base (80,80,40), o (100,100,50) en el área 80.
+- 30% si N>2: (120,120,40), y con otro 30%, (150,150,60).
+- 15% si N>5 y N≠120, según el área:
+  - Áreas 0 y 10: (110,110,70).
+  - Área 40: negro.
+  - Área 80: (90,130,70).
+- Se consume una tirada más (luces arcoíris, sin implementar).
+- En área oscura con N<120: (70,100,100) en el área 80, o (150,150,120) en las demás.
+- El nivel 100 usa (140,140,80).
+- Ese color es el ambiente fijo del lightmap.
+- La escalera de subida suma 4 luces de textura 4 en (x·64+32, (y−2+i)·64), con radios 0,25/0,5/0,75/1.
+
+**Probabilidades** (`populateLevel` + `adjustLevelChances`):
+- Valores iniciales:
+  - piedra `Next(10,30)/100`;
+  - monstruo `0,002 + Next(200)/10000`;
+  - ítem 0,0025;
+  - gema 0,003.
+- Nivel 1: monstruo, ítem y gema en 0.
+- `N%5 == 0`: ítem y gema en 0. Si además `N%10 == 0`, monstruo en 0.
+- La probabilidad de gema se divide por 2.
+- Los niveles `N%10 == 0` no se pueblan.
+
+**Recorrido**: por columnas x y, dentro, filas y.
+- Solo se usan tiles libres:
+  - fuera del tile de llegada;
+  - `Back.Type == "Stone"`;
+  - con `Back`, sin `Front` ni `Buildings`;
+  - índice `Back` distinto de 77;
+  - sin objetos ni rocas grandes.
+- En cada tile:
+  1. Si `r ≤ piedra`:
+     - En el área 40, un 15% de las veces son malezas 319–321.
+     - Si no, `createLitterObject`. Las piedras cuentan para `stonesLeft`.
+  2. Si no, si `r ≤ monstruo` y la distancia a la llegada es > 5: monstruo (sin implementar; el tile queda vacío).
+  3. Si no, si `r ≤ ítem`: objeto recogible de `getRandomItemForThisLevel`.
+     - 5% (N>80): 422.
+     - 10% (N>20, área ≠ 40): 420.
+     - 25%: 86, 84 u 82 según el área.
+     - En otro caso: 80.
+  4. Si no, si `r ≤ 0,005`, el área no es oscura y los 3 vecinos (x+1,y), (x,y+1), (x+1,y+1) están libres: roca 2×2 `Choose(752,754)`, o `Choose(756,758)` en el área 40.
+- Si `stonesLeft > 35`, se abren `stonesLeft/35` claros:
+  - Se elige un objeto al azar. Si es piedra, se toma un radio `Next(3,8)` y se consume una tirada.
+  - Se borran las piedras del cuadrado `[x−r/2, x+r/2)`, con división entera.
+- Extras por área (`tryToAddAreaUniques`):
+  - Ocurren en las áreas 10 y 80, o en la 40 con un 10%, si el área no es oscura.
+  - Se colocan `Next(7,24)` grupos de malezas: 313, 319 en el área 40 o 316 en la 80.
+  - Cada grupo usa `recursiveObjectPlacement` con decaimiento `Next(10,40)/100`, 3 variantes y 58% de saltos.
+- Escalera inicial: con 95%, si N>1, `N%5 != 0` y N≠120, en un tile aleatorio libre.
+- Vetas (`tryToAddOreClumps`, si `N%5 != 0` y N>2):
+  - Con 55%, una o más vetas (cada una adicional con 25%) en tiles aleatorios de suelo sólido no excavable.
+  - La veta sale de `getAppropriateOre`: cobre 751(3); en el área 40, hierro 290(4) con 80%; en la 80, oro 764(8) con 80%; 25% de piedra 668 (fuera del área 40).
+  - Se expande con `recursiveObjectPlacement(0,95, 0,3, 5% saltos)`. Las piedras alternan 668/670.
+- `recursiveObjectPlacement` coloca solo en tiles con `Back`, sin `Buildings`, desocupados y con `Type` distinto de `Dirt`.
+
+**`createLitterObject`** (sin dificultad extra). Salida: id(vida).
+- Áreas 0 y 10:
+  - `Next(31,42)`. Si `N%40 < 30` y está en [33,38): `Choose(32,38)`. Si `N%40 ≥ 30`: `Choose(34,36)`. Vida 1.
+  - Cobre 751(3) con 2,9% si N≠1 y `N%5 != 0`.
+- Área 40: `Next(47,54)` con vida 3, e hierro 290(4) con 2,9% si `N%5 != 0`.
+- Área 80, vida 4:
+  - 30% y no oscura: 38 o 32.
+  - Si no, 30%: `Next(55,58)`.
+  - Si no: 760 o 762.
+  - Oro 764(8) con 2,9% si `N%5 != 0`.
+- Común (suerte = suerte diaria + minería·0,005):
+  - N>50: diamante 2(10) con `0,00025 + N/120000 + 0,0005·suerte/2`.
+  - Si no, gema `getRandomGemRichStoneForThisLevel`(5) con `pG + pG·suerte + N/24000`.
+  - Piedra 44 con `0,0005 + 0,001·minería·0,008 + 0,001·diaria/2`.
+  - N>100: 46 con la fórmula análoga sobre 0,00005.
+  - Se redondea a par.
+  - 10% (área ≠ 40): `Choose("668","670")` con vida 2 y volteo al azar.
+- Gema por nivel: `Next(59,70)` redondeado a par. Sin haber llegado al fondo:
+  - N<40 fuerza 66 o 68.
+  - N<80 cambia 64 y 60 por `Choose(66,70,68,62)`.
+  - Nodos: 60→"12", 62→"14", 64→"4", 66→"8", 68→"10", 70→"6".
+- `RandomExtensions.Choose` de 2 opciones usa `NextDouble() < 0,5`. Con 3 o más usa `Next(n)`.
+
+**Pico** (`Pickaxe.DoFunction`):
+- Cada golpe resta `máx(1, mejora+1)` a la vida (`MinutesUntilReady`) y sacude el objeto 200 ms (±1 px).
+- Se rompe al llegar a ≤ 0. Las piedras con vida 0 (granja) caen al primer golpe.
+- Al romper: polvo de `animations` fila 46, 10 cuadros de 80 ms, con velocidad −0,6, aceleración 0,002 y desvanecimiento 0,015 por tick.
+
+**`checkStoneForItems`** (niveles generados; r = `CreateDaySaveRandom(x·1000, y, N)`, con una tirada descartada):
+- Se resta 1 a `stonesLeft`.
+- Probabilidad de escalera: `0,02 + 1/máx(1, restantes) + suerte/100 + diaria/5`, más 0,04 sin enemigos.
+  - Aparece si no hay otra y (quedan 0 piedras o la tirada pasa), salvo en el nivel 120.
+  - Pone el tile 173 y 5 polvos (fila 5, alfa 0,5, retrasos 0–600 ms).
+- Luego `breakStone`. Si da experiencia, termina ahí:
+  - 751 y 849: cobre ×(`Next(1,4)` + suerte/100 + minería/100), 5 XP.
+  - 290: hierro, 12 XP.
+  - 764: oro, 18 XP.
+  - 765: iridio y prismático con 3,5%, 50 XP.
+  - 668 y 670: piedra ×(`Next(1,3)`…), 3 XP; con 8%, carbón, 4 XP.
+  - Nodos de gema: 2→72 (150), 4→64 (80), 6→70 (40), 8→66 (16), 10→68 (16), 12→60 (80), 14→62 (40). La 44 se convierte antes en `Next(1,8)·2`.
+  - 46: iridio `Next(1,4)` y oro `Next(1,5)`, prismático con 25%, 150 XP.
+  - Profesiones: Minero (18) suma 1 a cada cantidad. Geólogo (19) duplica gemas con 50%.
+- Si no dio experiencia:
+  - Geoda 535/536/537 según el área, con `0,022·(1+mod)`.
+  - Omni-geoda 749 si N>20, con `0,005·(1+mod)`.
+  - Con `0,05·(1+mod)·(1,2 si es la piedra 40/42, si no 0,8)`: carbón con 25% y mineral del nivel, 5 XP.
+  - Si no, 50%: una piedra.
+  - mod = diaria/2 + minería·0,005 + suerte·0,001.
+- Mineral del nivel:
+  - N<40: hierro con 10% desde el 20; si no, cobre.
+  - N<80: oro con 10% desde el 60; si no, hierro con 75% o cobre.
+  - N≥80: oro con 75%; si no, hierro con 75% o cobre.
+- Las minas no son exteriores: las piedras comunes no dan experiencia propia.
+
+**Piedras de la granja** (`GameLocation.OnStoneDestroyed` + `breakStone` exterior):
+- Para 343/450, con `CreateDaySaveRandom(x·2000, y, 0)` y solo si `díasJugados > 1`:
+  - Geoda con 3,5% (535; con más de 60 días, 20% de 536; con más de 120, 20% de 537).
+  - Carbón con 3,5% (×2 con Prospector).
+  - Piedra con 1%.
+- `breakStone` exterior (r = `(x·1000, y, 0)`): una piedra y 1 XP. Con `0,05·(1+mod)`, carbón y 5 XP más.
+
+**Recolección**: los objetos `IsSpawnedObject` se toman con la acción.
+- Si son forrajeables (categorías −79, −81, −80, −75, −23, el tag `forage_item` o el 430):
+  - Calidad con `CreateDaySaveRandom(x, y·777, 0)`: iridio con Botánico; si no, oro con forrajeo/30 y plata con forrajeo/15.
+  - Dan 7 XP de forrajeo.
+
+**Aproximaciones**:
+- Sin monstruos ni combate, barriles, ascensor, pozos, niveles infestados ni cantera.
+- Sin mapas alternativos tras llegar al fondo, luces arcoíris, niebla, caminos del minero, Skull Cavern ni suerte diaria (vale 0).
+- Las rocas 2×2 no se pueden romper todavía.
+- Las luces se dibujan sin tinte.
+- Falta el sprite de piedra agrietada al romper.
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:

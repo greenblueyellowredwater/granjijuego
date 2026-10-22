@@ -22,8 +22,9 @@ import { sortSocialEntries, type SocialEntry } from "../render/social-page.ts";
 import { canCraft, consumeIngredients, countIngredient, layoutRecipes, parseRecipe, type Recipe, type RecipeSlot } from "../world/crafting.ts";
 import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, parseText, TOOL_CATEGORY_COLOR, type TooltipContent } from "../render/tooltip.ts";
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
-import { dayTileGlows, locationLights, torchLight, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
+import { dayTileGlows, LightContext, locationLights, torchLight, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
 import { LightingOverlay } from "../render/lighting.ts";
+import { checkStoneForItems, LADDER_DOWN, LADDER_UP, MINE_SHEET, mineLadderLights, mineLevelOf, mineLighting, mineLocationName, mineMapImage, mineMapNumber, outdoorStoneDestroyed, populateLevel, type MineMap, type MinerContext } from "../world/mines.ts";
 import { DIALOGUE_FONT, Hud, HUD_DEPTH, type HudStrings } from "../render/hud.ts";
 import { QuestionBox } from "../render/question.ts";
 import { SpriteFont, type SpriteFontData } from "../render/spritefont.ts";
@@ -175,6 +176,8 @@ export interface WorldData {
 }
 
 export function resolveMapPath(locations: LocationsData, name: string) {
+  const level = mineLevelOf(name);
+  if (level !== null) return `Maps/Mines/${mineMapNumber(level)}`;
   const path = locations[name]?.CreateOnLoad?.MapPath;
   return (path ?? `Maps/${name}`).replace(/\\/g, "/");
 }
@@ -240,10 +243,12 @@ export class World extends Phaser.Scene {
   private entities: Entity[] = [];
   private dirtPool: Phaser.GameObjects.Image[] = [];
   private dirtDirty = true;
-  private tool: { anim: SingleAnimation; kind: ToolKind; initial: number; facing: Facing; texture: string; target: { x: number; y: number } } | null = null;
+  private tool: { anim: SingleAnimation; kind: ToolKind; initial: number; facing: Facing; texture: string; target: { x: number; y: number }; upgradeLevel: number } | null = null;
   private toolImage: Phaser.GameObjects.Image | null = null;
   private temps: TempSprite[] = [];
   private tempPool: Phaser.GameObjects.Image[] = [];
+  private mine: { level: number; stonesLeft: number; ladderHasSpawned: boolean; enemies: number; lighting: [number, number, number, number]; start: { x: number; y: number } } | null = null;
+  private shakes = new Map<Entity, number>();
 
   constructor() {
     super("World");
@@ -284,6 +289,8 @@ export class World extends Phaser.Scene {
     this.toolImage = null;
     this.temps = [];
     this.tempPool = [];
+    this.mine = null;
+    this.shakes = new Map();
   }
 
   private get outdoors() {
@@ -296,7 +303,7 @@ export class World extends Phaser.Scene {
   }
 
   private get lightingContext(): LightingContext {
-    return { season: this.params.state.season, outdoors: this.outdoors, raining: this.weather.raining };
+    return { season: this.params.state.season, outdoors: this.outdoors, raining: this.weather.raining, ...(this.mine ? { fixedAmbient: this.mine.lighting } : {}) };
   }
 
   private gsqState(): GsqState {
@@ -306,7 +313,7 @@ export class World extends Phaser.Scene {
 
   preload() {
     if (!this.params.manifest.maps.includes(this.mapPath)) return;
-    queueTilemap(this, this.mapPath, this.params.manifest, this.params.season);
+    queueTilemap(this, this.mapPath, this.params.manifest, this.params.season, this.tilesetOverrides());
     for (const key of Object.values(farmerTextureKeys(this.appearance))) {
       if (!this.textures.exists(key)) this.load.image(key, contentUrl(key, "png"));
     }
@@ -356,8 +363,90 @@ export class World extends Phaser.Scene {
     }
   }
 
+  private tilesetOverrides(): Record<string, string> {
+    const level = mineLevelOf(this.params.start.location);
+    if (level === null) return {};
+    const { image } = mineMapImage(level, mineMapNumber(level));
+    return image && image in this.params.manifest.textures ? { "Maps/Mines/mine": image } : {};
+  }
+
+  private minerContext(): MinerContext {
+    const state = this.params.state;
+    return {
+      dailyLuck: 0,
+      luckLevel: 0,
+      miningLevel: levelForExperience(state.experience[MINING] ?? 0),
+      reachedBottom: (state.timesReachedMineBottom ?? 0) > 0,
+      professions: state.professions ?? [],
+    };
+  }
+
+  private mineMap(): MineMap {
+    const loc = this.location;
+    return {
+      width: loc.width,
+      height: loc.height,
+      backType: (x, y) => {
+        const t = loc.tileProps("Back", x, y)?.Type;
+        return typeof t === "string" ? t : undefined;
+      },
+      hasTile: (layer, x, y) => loc.tile(layer, x, y) !== 0,
+      mineIndex: (layer, x, y) => loc.tileIndexOnSheet(layer, x, y, MINE_SHEET),
+      diggable: (x, y) => "Diggable" in (loc.tileProps("Back", x, y) ?? {}),
+    };
+  }
+
+  private spawnMine(level: number) {
+    const state = this.params.state;
+    const { dark } = mineMapImage(level, mineMapNumber(level));
+    const level$ = populateLevel(this.mineMap(), level, dark, new DotNetRandom(Math.floor(Math.random() * 2147483647)), this.minerContext(), (id) => this.isStoneId(id));
+    const light = mineLighting(level, dark, daySaveRandom(this.gsqState(), state.daysPlayed, level, 4 * level));
+    this.mine = { level, stonesLeft: level$.stonesLeft, ladderHasSpawned: false, enemies: 0, lighting: light.color, start: level$.start };
+    state.deepestMineLevel = Math.max(state.deepestMineLevel ?? 0, level);
+    if (level === 120) state.timesReachedMineBottom = (state.timesReachedMineBottom ?? 0) + 1;
+    this.entities = level$.entities;
+    this.staticSolids = this.entities.flatMap((e) => this.solidsOf(e));
+    this.location.setSolids(this.staticSolids);
+    for (const e of this.entities) this.addEntitySprites(e);
+    if (level$.ladder) this.createLadderDown(level$.ladder.x, level$.ladder.y);
+  }
+
+  private isStoneId(id: string) {
+    const data = this.params.items.objects[id] as { Name?: string; Category?: number } | undefined;
+    return data?.Category === -999 && data?.Name === "Stone";
+  }
+
+  private createLadderDown(x: number, y: number) {
+    if (!this.mine) return;
+    const gid = this.location.placeTile("Buildings", x, y, MINE_SHEET, LADDER_DOWN);
+    if (gid !== null) this.rendered.setTile("Buildings", x, y, gid);
+    this.mine.ladderHasSpawned = true;
+    const offsets = [[0, 0, 0], [-16, -16, 150], [32, 16, 300], [-32, 16, 450], [16, -16, 600]];
+    for (const [dx, dy, delay] of offsets) this.temps.push({ ...animationSprite(5, x * TILE + dx, y * TILE + dy, 8, false, 80), elapsed: -delay, alpha: 0.5 });
+  }
+
+  private tryMineTile(x: number, y: number) {
+    if (!this.mine) return false;
+    const index = this.location.tileIndexOnSheet("Buildings", x, y, MINE_SHEET);
+    if (index === LADDER_DOWN) {
+      this.warpTo(mineLocationName(this.mine.level + 1), -1, -1);
+      return true;
+    }
+    if (index !== LADDER_UP || !this.question) return false;
+    const loc = this.params.strings["Strings\\Locations"] ?? {};
+    void this.question.ask(" ", [loc["Mines_LeaveMine"] ?? "", loc["Mines_DoNothing"] ?? ""]).then((answer) => {
+      if (answer === 0) this.warpTo("Mine", 23, 8, Facing.Up);
+    });
+    return true;
+  }
+
   private spawnTerrain() {
     const { state, store } = this.params;
+    const level = mineLevelOf(this.location.name);
+    if (level !== null) {
+      this.spawnMine(level);
+      return;
+    }
     const { entities, created } = locationEntities(state, this.location.name, () =>
       generateLocationObjects(this.location, state.season, new DotNetRandom(Math.floor(Math.random() * 2147483647))),
     );
@@ -559,12 +648,69 @@ export class World extends Phaser.Scene {
     const data = this.params.items.objects[obj.itemId] as { Name?: string; Category?: number } | undefined;
     const kind = debrisKind(data?.Name, data?.Category);
     if (!toolBreaks(kind, tool)) return false;
+    if (kind === "stone") return this.hitStone(obj, tx, ty);
     this.removeEntity(obj);
     if (kind === "twig") gainExperience(this.params.state, FORAGING, 1);
-    if (kind === "stone") gainExperience(this.params.state, MINING, 1);
     this.dropItems(debrisDrops(kind), tx, ty);
     if (kind !== "weeds") this.temps.push(animationSprite(12, tx * TILE, ty * TILE, 8, Math.random() < 0.5, 50));
     return true;
+  }
+
+  private hitStone(obj: Extract<Entity, { kind: "object" }>, tx: number, ty: number) {
+    const state = this.params.state;
+    if ((obj.hp ?? 0) > 0) {
+      obj.hp = (obj.hp ?? 0) - Math.max(1, (this.tool?.upgradeLevel ?? 0) + 1);
+      this.shakes.set(obj, 200);
+      if (obj.hp > 0) return true;
+    }
+    this.removeEntity(obj);
+    this.shakes.delete(obj);
+    this.temps.push({ ...animationSprite(46, tx * TILE, ty * TILE, 10, false, 80), vy: -0.6, ay: 0.002, alphaFade: 0.015 });
+    const gsq = this.gsqState();
+    const ctx = this.minerContext();
+    const result = this.mine
+      ? checkStoneForItems(obj.itemId, this.mine.level, daySaveRandom(gsq, tx * 1000, ty, this.mine.level), ctx, this.mine)
+      : { ...outdoorStoneDestroyed(obj.itemId, tx, ty, ctx, state.daysPlayed, (a, b, c) => daySaveRandom(gsq, a, b, c)), ladder: false };
+    for (const d of result.drops) this.dropItems(Array(d.count).fill(d.id), tx, ty);
+    if (result.experience > 0) gainExperience(state, MINING, result.experience);
+    if (result.ladder) this.createLadderDown(tx, ty);
+    return true;
+  }
+
+  private tryPickUpSpawned(tx: number, ty: number) {
+    const obj = this.entities.find((e): e is Extract<Entity, { kind: "object" }> => e.kind === "object" && !!e.spawned && e.x === tx && e.y === ty);
+    if (!obj) return false;
+    const state = this.params.state;
+    const data = this.params.items.objects[obj.itemId] as { Category?: number; ContextTags?: string[] } | undefined;
+    const forage = [-79, -81, -80, -75, -23].includes(data?.Category ?? 0) || !!data?.ContextTags?.includes("forage_item") || obj.itemId === "430";
+    let quality = 0;
+    if (forage) {
+      const foraging = levelForExperience(state.experience[FORAGING] ?? 0);
+      const r = daySaveRandom(this.gsqState(), tx, ty * 777, 0);
+      if (state.professions?.includes(16)) quality = 4;
+      else if (r.nextDouble() < foraging / 30) quality = 2;
+      else if (r.nextDouble() < foraging / 15) quality = 1;
+    }
+    if (addItem(state.inventory, { id: `(O)${obj.itemId}`, stack: 1, ...(quality ? { quality } : {}) })) {
+      this.message = this.params.text.inventoryFull;
+      return true;
+    }
+    if (forage) gainExperience(state, FORAGING, 7);
+    this.removeEntity(obj);
+    return true;
+  }
+
+  private tickShakes(ms: number) {
+    for (const [e, left] of this.shakes) {
+      const rest = left - ms;
+      for (const img of this.entityImages.get(e) ?? []) {
+        if (img.getData("baseX") === undefined) img.setData("baseX", img.x);
+        const base = img.getData("baseX") as number;
+        img.x = rest > 0 ? base + Phaser.Math.Between(-1, 1) : base;
+      }
+      if (rest > 0) this.shakes.set(e, rest);
+      else this.shakes.delete(e);
+    }
   }
 
   private updateDrops() {
@@ -694,11 +840,11 @@ export class World extends Phaser.Scene {
     const item = this.params.state.inventory[this.params.state.currentToolIndex];
     if (!item) return null;
     const { type, id } = parseId(item.id);
-    if (type === "W" && id === "47") return { kind: "scythe" as ToolKind, initial: -1, texture: "TileSheets/weapons" };
+    if (type === "W" && id === "47") return { kind: "scythe" as ToolKind, initial: -1, texture: "TileSheets/weapons", upgradeLevel: 0 };
     if (type !== "T") return null;
     const data = this.params.items.tools[id];
     if (!data) return null;
-    return { kind: toolKind(data.ClassName), initial: data.SpriteIndex, texture: (data.Texture ?? "TileSheets/tools").replace(/\\/g, "/") };
+    return { kind: toolKind(data.ClassName), initial: data.SpriteIndex, texture: (data.Texture ?? "TileSheets/tools").replace(/\\/g, "/"), upgradeLevel: data.UpgradeLevel ?? 0 };
   }
 
   private tryPlant(target?: { x: number; y: number }) {
@@ -792,7 +938,7 @@ export class World extends Phaser.Scene {
     const at = target ?? toolLocation(this.body.x, this.body.y, facing);
     if (t.kind === "wateringCan" && state.waterLeft <= 0 && !this.location.isWater(Math.floor(at.x / TILE), Math.floor(at.y / TILE))) return;
     const frames = t.kind === "wateringCan" ? wateringAnimation(facing) : swingAnimation(facing);
-    this.tool = { kind: t.kind, initial: t.initial, facing, texture: t.texture, target: at, anim: null as unknown as SingleAnimation };
+    this.tool = { kind: t.kind, initial: t.initial, facing, texture: t.texture, target: at, upgradeLevel: t.upgradeLevel ?? 0, anim: null as unknown as SingleAnimation };
     this.tool.anim = new SingleAnimation(frames, (b) => this.onToolBehavior(b));
   }
 
@@ -871,14 +1017,21 @@ export class World extends Phaser.Scene {
     let used = 0;
     this.temps = this.temps.filter((s) => {
       s.elapsed += ms;
+      const ticks = ms / (1000 / 60);
+      if (s.elapsed > 0 && s.vy !== undefined) {
+        s.y += s.vy * ticks;
+        s.vy += (s.ay ?? 0) * ticks;
+      }
+      if (s.elapsed > 0 && s.alphaFade) s.alpha = (s.alpha ?? 1) - s.alphaFade * ticks;
       const f = tempSpriteFrame(s);
       if (!f || !this.textures.exists(s.texture)) return false;
+      if (f.sw === 0) return true;
       const tex = this.textures.get(s.texture);
       const frame = `${f.sx},${f.sy},${f.sw},${f.sh}`;
       if (!tex.has(frame)) tex.add(frame, 0, f.sx, f.sy, f.sw, f.sh);
       const img = this.tempPool[used] ?? this.add.image(0, 0, s.texture, frame).setOrigin(0, 0);
       this.tempPool[used++] = img;
-      img.setTexture(s.texture, frame).setPosition(s.x, s.y).setFlipX(s.flipped).setDepth(this.rendered.spriteDepth(s.depth)).setVisible(true);
+      img.setTexture(s.texture, frame).setPosition(s.x, s.y).setFlipX(s.flipped).setAlpha(Math.max(0, s.alpha ?? 1)).setDepth(this.rendered.spriteDepth(s.depth)).setVisible(true);
       return true;
     });
     for (let i = used; i < this.tempPool.length; i++) this.tempPool[i].setVisible(false);
@@ -905,6 +1058,7 @@ export class World extends Phaser.Scene {
       else glows = [];
     }
     this.lightSources = locationLights(this.location.name, this.location.props, glows, { turnOff, raining });
+    if (this.mine) for (const l of mineLadderLights(this.mine.level, this.mine.start)) this.lightSources.push({ ...l, texture: 4, color: [0, 20, 50, 255], context: LightContext.None, fadeOut: -1 });
     this.addObjectLights();
   }
 
@@ -976,8 +1130,8 @@ export class World extends Phaser.Scene {
       this.params.onStatus(`No existe el mapa ${this.mapPath} para la location ${start.location}`);
       return;
     }
-    this.rendered = new RenderedMap(this, this.mapPath, this.params.manifest, this.params.season, PIXEL_SCALE);
-    this.location = new Location(start.location, this.rendered.data);
+    this.rendered = new RenderedMap(this, this.mapPath, this.params.manifest, this.params.season, PIXEL_SCALE, this.tilesetOverrides());
+    this.location = new Location(start.location, structuredClone(this.rendered.data));
     this.featureYOffset = this.cache.json.get(FARMER_TABLES)?.featureYOffsetPerFrame ?? [];
     this.featureXOffset = this.cache.json.get(FARMER_TABLES)?.featureXOffsetPerFrame ?? [];
     this.spawnTerrain();
@@ -1090,6 +1244,7 @@ export class World extends Phaser.Scene {
   }
 
   private spawnTile(start: WorldStart) {
+    if (this.mine) return this.mine.start;
     const fx = start.x ?? Math.floor(this.location.width / 2);
     const fy = start.y ?? Math.floor(this.location.height / 2);
     const p = positionForTile(fx, fy);
@@ -1766,6 +1921,10 @@ export class World extends Phaser.Scene {
       return true;
     };
     switch (words[0]) {
+      case "Mine":
+        if (words[1] && words[1] !== "1") return false;
+        this.warpTo(mineLocationName(1), -1, -1);
+        return true;
       case "Buy":
         if (words[1] === "Fish") return this.tryOpenShopArea("FishShop", undefined, me.y - 1) || true;
         if (this.location.name === "SeedShop") {
@@ -1915,6 +2074,8 @@ export class World extends Phaser.Scene {
     }
     const t = facingTile(this.body);
     const npc = this.npcAt(t.x, t.y);
+    if (this.tryMineTile(t.x, t.y)) return;
+    if (this.tryPickUpSpawned(t.x, t.y)) return;
     if (this.tryOpenChest(t.x, t.y)) return;
     if (this.tryMachine(t.x, t.y)) return;
     if (npc && this.tryGift(npc)) return;
@@ -1933,7 +2094,7 @@ export class World extends Phaser.Scene {
     else this.message = `Acción todavía no implementada: ${action}`;
   }
 
-  private warpTo(target: string, x: number, y: number) {
+  private warpTo(target: string, x: number, y: number, facing = this.body.facing) {
     if (this.warping) return;
     const mapPath = resolveMapPath(this.params.locations, target);
     if (!this.params.manifest.maps.includes(mapPath)) {
@@ -1941,7 +2102,6 @@ export class World extends Phaser.Scene {
       return;
     }
     this.warping = true;
-    const facing = this.body.facing;
     this.cameras.main.fade(150, 0, 0, 0, true);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
       this.scene.restart({ ...this.params, start: { location: target, x, y, facing } });
@@ -2206,6 +2366,7 @@ export class World extends Phaser.Scene {
     this.drawDrops();
     this.drawNpcs();
     this.drawTemps(delta);
+    this.tickShakes(delta);
     this.drawLightingAndHud(time);
 
     const c = centerTile(this.body);

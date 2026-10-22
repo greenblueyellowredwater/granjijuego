@@ -51,12 +51,12 @@ export function frontTileDepth(row: number, sublayerIndex: number, sublayerCount
 
 export const mapCacheKey = (mapPath: string) => `map:${mapPath}`;
 
-export function queueTilemap(scene: Phaser.Scene, mapPath: string, manifest: Manifest, season: Season) {
+export function queueTilemap(scene: Phaser.Scene, mapPath: string, manifest: Manifest, season: Season, overrides: Record<string, string> = {}) {
   const key = mapCacheKey(mapPath);
   const queueImages = () => {
     const json = scene.cache.tilemap.get(key).data as TiledMap;
     for (const ts of json.tilesets) {
-      const tex = seasonalTexture(manifest, ts.image, season);
+      const tex = seasonalTexture(manifest, overrides[ts.image] ?? ts.image, season);
       if (!scene.textures.exists(tex)) scene.load.image(tex, contentUrl(tex, "png"));
     }
   };
@@ -82,13 +82,14 @@ export class RenderedMap {
     manifest: Manifest,
     season: Season,
     readonly scale = 1,
+    overrides: Record<string, string> = {},
   ) {
     const key = mapCacheKey(mapPath);
     this.data = scene.cache.tilemap.get(key).data as TiledMap;
     this.map = scene.make.tilemap({ key });
     this.tilesets = this.map.tilesets.map((ts) => {
       const image = this.data.tilesets.find((t) => t.name === ts.name)!.image;
-      return this.map.addTilesetImage(ts.name, seasonalTexture(manifest, image, season))!;
+      return this.map.addTilesetImage(ts.name, seasonalTexture(manifest, overrides[image] ?? image, season))!;
     });
     const order = drawOrder(this.map.layers.map((l) => l.name)).filter((n) => !HIDDEN_LAYERS.has(n));
     const sortedLayers = order.filter((n) => layerGroup(n) === SORTED_GROUP);

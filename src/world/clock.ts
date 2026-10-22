@@ -36,6 +36,7 @@ export interface LightingContext {
   raining?: boolean;
   lightLevel?: number;
   extraMsPerMinute?: number;
+  fixedAmbient?: RGBA;
 }
 
 export function startingToGetDarkTime(ctx: Pick<LightingContext, "season" | "island">) {
@@ -109,6 +110,7 @@ export interface Lighting {
 }
 
 export function lighting(time: number, interval: number, ctx: LightingContext): Lighting {
+  if (ctx.fixedAmbient) return { ambient: ctx.fixedAmbient, outdoor: WHITE, draw: !sameColor(ctx.fixedAmbient, WHITE), fill: ctx.fixedAmbient };
   const ambient = ambientLight(time, interval, ctx);
   const outdoor = outdoorLight(time, interval, ctx, ambient);
   const draw = (ctx.outdoors && !sameColor(outdoor, WHITE)) || !sameColor(ambient, WHITE);

@@ -95,6 +95,10 @@ export interface TempSprite {
   flipped: boolean;
   depth: number;
   elapsed: number;
+  vy?: number;
+  ay?: number;
+  alpha?: number;
+  alphaFade?: number;
 }
 
 export function animationSprite(row: number, x: number, y: number, frames: number, flipped: boolean, interval: number): TempSprite {
@@ -103,5 +107,6 @@ export function animationSprite(row: number, x: number, y: number, frames: numbe
 
 export function tempSpriteFrame(s: TempSprite) {
   const i = Math.floor(s.elapsed / s.interval);
-  return i >= s.frames ? null : { sx: i * 64, sy: s.row * 64, sw: 64, sh: 64 };
+  if (s.elapsed < 0) return { sx: 0, sy: 0, sw: 0, sh: 0 };
+  return i >= s.frames || (s.alpha ?? 1) <= 0 ? null : { sx: i * 64, sy: s.row * 64, sw: 64, sh: 64 };
 }

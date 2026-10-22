@@ -31,6 +31,8 @@ export interface GameState {
   professions: number[];
   toolUpgrade?: { id: string; daysLeft: number } | null;
   fishCaught?: Record<string, [number, number]>;
+  deepestMineLevel?: number;
+  timesReachedMineBottom?: number;
   craftingRecipes: string[];
   cookingRecipes: string[];
   appearance?: Appearance;
