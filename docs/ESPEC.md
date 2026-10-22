@@ -775,8 +775,42 @@ Aproximaciones:
 
 Aproximaciones:
 - Solo funciona la pestaña de inventario.
-- Sin mini-retrato en la pestaña de habilidades, sin tooltips y sin botón de ordenar funcional.
+- Sin mini-retrato en la pestaña de habilidades y sin botón de ordenar funcional.
 - Sin la capa azul nocturna sobre el granjero, sin animación de la tapa del tacho y sin tirar ítems fuera del menú.
+
+## Spec S13: tooltips de ítems (`IClickableMenu.drawToolTip` / `drawHoverText`)
+
+**Contenido**:
+- Título: `DisplayName`.
+- Texto: descripción partida con `Game1.parseText` (smallFont) al ancho `max(272, ancho dialogueFont del nombre)`. Corta por palabra cuando `ancho(línea+palabra) > ancho`.
+- Categoría:
+  - Objetos: `Object.GetCategoryDisplayName`, con nombres en `StringsFromCSFiles` (Object.cs.12850–12869, Tool.cs.14307, etc.) y colores de `GetCategoryColor`.
+  - Herramientas y guadaña: "Tool" en DarkSlateGray.
+  - Tipo `Arch`: color (110,0,90).
+- `healAmount` es la comestibilidad si es un objeto con comestibilidad distinta de −300; si no, −1.
+
+**Tamaño** (`font` = smallFont):
+- Ancho: `max(heal ≠ −1 ? ancho(heal+"+ Energy"+"32") : 0, ancho(texto), ancho_dialogue(título)) + 32`. Con categoría, también `≥ ancho(cat)+32`. Si es comestible, también `≥ ancho("9999 Energy"/"9999 Health") + 92`.
+- Alto: `max(60, alto(texto) + 32 + alto_dialogue(título) + 16)`.
+  - Con categoría se suma `alto("T")`.
+  - Si es comestible (≠ −300 y ≠ 0) se suma `40·(energía>0 y salud>0 ? 2 : 1)`.
+- Posición `(mouse + 32 + off)`, con `off` = 40 si hay un ítem en la mano.
+  - Si se pasa por la derecha: `x = derecha − ancho` e `y += 16`.
+  - Si se pasa por abajo: `x += 16` (re-acotado) e `y = abajo − alto`.
+- Después se suma 4 al ancho.
+
+**Dibujo**:
+- Caja `MenuTiles (0,256,60,60)` en 9-slice. La sombra es la misma caja desplazada (−8,+8) en negro a 0,4, con el centro inset c/2.
+- Caja del título: alto `alto_título + 32 + (cat ? alto("asd") : 0) − 4`, sin sombra. Debajo, un separador `(44,300,4,4)` en `(x+12, y+eso, ancho−24, 4)`.
+- Título en `(x+16, y+20)` con sombras (+2,+2) y (0,+2) en textShadowColor.
+- Después `y += alto_título`. La categoría va en `y−4` con sombras (2,2) y (0,2), y luego `y += alto("T") + 4 + 16`. Sin categoría, `y += 16`.
+- Descripción en `(x+16, y+20)` con sombras (2,2), (0,2) y (2,0), en textColor·0,9.
+- Comestibles: energía `+n` con ícono (0,428) y salud `+n` con ícono (0,438), solo si son mayores que 0.
+  - Si la energía es negativa: ícono (140,428).
+  - Íconos ×3 con sombra (−4,+4) a 0,35. Texto en `(x+54, y+16)` y 34 px por línea.
+  - Fórmulas: energía `⌈e·2,5⌉ + calidad·e`; salud `trunc(energía·0,45f)` (0 si e<0).
+
+Aproximaciones: sin estadísticas de armas, buffs, precio con el catálogo de precios ni requisitos de recetas.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

@@ -28,3 +28,31 @@ describe("menús", () => {
     expect([s.money, s.totalEarned]).toEqual([570, 120]);
   });
 });
+
+describe("tooltips", async () => {
+  const { parseText, staminaRecovered, healthRecovered, tooltipLayout, categoryNameKey, categoryColor } = await import("../src/render/tooltip.ts");
+  const mono = { measure: (t: string) => ({ width: t.length * 10, height: (t.split("\n").length) * 20 }) };
+
+  it("parte el texto por palabras como Game1.parseText", () => {
+    expect(parseText("aa bb cc", mono, 55)).toBe("aa bb \ncc ");
+  });
+
+  it("energía y salud al comer", () => {
+    expect([staminaRecovered(10, 0), healthRecovered(10, 0)]).toEqual([25, 11]);
+    expect([staminaRecovered(10, 2), healthRecovered(10, 2)]).toEqual([45, 20]);
+    expect(healthRecovered(-20, 0)).toBe(0);
+  });
+
+  it("categorías", () => {
+    expect([categoryNameKey(-75), categoryColor(-75)]).toEqual(["Object.cs.12851", 0x008000]);
+    expect(categoryNameKey(-999)).toBeNull();
+  });
+
+  it("tamaño y reubicación en pantalla", () => {
+    const c = { title: "Parsnip", text: "abc", category: "Vegetable", categoryColor: 0, edibility: null, quality: 0 };
+    const l = tooltipLayout(c, mono, mono, { x: 100, y: 100 }, 0, { w: 1280, h: 800 }, { energy: "{0} Energy", health: "{0} Health" });
+    expect(l).toEqual({ x: 132, y: 132, w: 122 + 4, h: 32 + 20 + 36 + 20 });
+    const edge = tooltipLayout(c, mono, mono, { x: 1250, y: 790 }, 0, { w: 1280, h: 800 }, { energy: "{0} Energy", health: "{0} Health" });
+    expect([edge.x, edge.y]).toEqual([1280 - 122, 800 - 108]);
+  });
+});

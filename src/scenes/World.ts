@@ -10,15 +10,16 @@ import { DEPTH } from "../render/tilemap.ts";
 import { FarmerSprite, farmerTextureKeys } from "../render/farmer.ts";
 import { DEFAULT_APPEARANCE, pantsInfo, shirtInfo, type ClothingData } from "../world/farmer-appearance.ts";
 import { GameMenu, gameMenuLayout } from "../render/game-menu.ts";
+import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, parseText, TOOL_CATEGORY_COLOR, type TooltipContent } from "../render/tooltip.ts";
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
 import { dayTileGlows, locationLights, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
 import { LightingOverlay } from "../render/lighting.ts";
 import { DIALOGUE_FONT, Hud, HUD_DEPTH, type HudStrings } from "../render/hud.ts";
 import { QuestionBox } from "../render/question.ts";
-import type { SpriteFontData } from "../render/spritefont.ts";
+import { SpriteFont, type SpriteFontData } from "../render/spritefont.ts";
 import { RAIN_TEXTURE, WeatherRenderer } from "../render/weather.ts";
 import { MENU_TEXTURE, TINY_FONT, ToolbarRenderer, toolbarLayout } from "../render/toolbar.ts";
-import { parseId, type ItemData } from "../world/items.ts";
+import { parseId, type Item, type ItemData } from "../world/items.ts";
 import {
   SingleAnimation,
   swingAnimation,
@@ -92,6 +93,7 @@ const MAX_TICKS_PER_FRAME = 8;
 const TICK_REAL_MS = 1000 / TICKS_PER_SECOND;
 const FONT_DATA = "Fonts/SpriteFont1.spritefont";
 const TINY_FONT_DATA = "Fonts/tinyFont.spritefont";
+const SMALL_FONT_DATA = "Fonts/SmallFont.spritefont";
 const WATERING_CAN_CAPACITY = 40;
 const SLOT_KEYS = ["ONE", "TWO", "THREE", "FOUR", "FIVE", "SIX", "SEVEN", "EIGHT", "NINE", "ZERO", "MINUS", "PLUS"];
 const FARMHOUSE = "FarmHouse";
@@ -203,6 +205,8 @@ export class World extends Phaser.Scene {
   private shop: ShopMenu | null = null;
   private gameMenu: GameMenu | null = null;
   private menuFarmer: FarmerSprite | null = null;
+  private smallFont: SpriteFont | null = null;
+  private dialogueFont: SpriteFont | null = null;
   private water: { grid: WaterGrid; state: WaterState; tint: number; alpha: number; pool: Phaser.GameObjects.Image[] } | null = null;
   private ticks = 0;
   private lightSources: LightSource[] = [];
@@ -288,7 +292,7 @@ export class World extends Phaser.Scene {
     }
     if (!this.textures.exists(SHADOW_TEXTURE)) this.load.image(SHADOW_TEXTURE, contentUrl(SHADOW_TEXTURE, "png"));
     if (!this.cache.json.exists(FARMER_TABLES)) this.load.json(FARMER_TABLES, contentUrl(FARMER_TABLES, "json"));
-    for (const f of [FONT_DATA, TINY_FONT_DATA]) if (!this.cache.json.exists(f)) this.load.json(f, contentUrl(f, "json"));
+    for (const f of [FONT_DATA, TINY_FONT_DATA, SMALL_FONT_DATA]) if (!this.cache.json.exists(f)) this.load.json(f, contentUrl(f, "json"));
     const textures = new Set([
       "LooseSprites/Cursors",
       "LooseSprites/Cursors_1_6",
@@ -326,7 +330,7 @@ export class World extends Phaser.Scene {
     }
     textures.add(SPRITE_TEXT_TEXTURE);
     textures.add(EMOTE_TEXTURE);
-    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles"]) textures.add(t);
+    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont"]) textures.add(t);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
     }
@@ -909,7 +913,9 @@ export class World extends Phaser.Scene {
     this.question = fontData ? new QuestionBox(this, fontData) : null;
     this.dialogueBox = new DialogueBox(this, HUD_DEPTH + 20);
     this.shop = new ShopMenu(this, HUD_DEPTH + 30);
-    this.gameMenu = new GameMenu(this, HUD_DEPTH + 40, fontData, this.cache.json.get(TINY_FONT_DATA) as SpriteFontData | undefined);
+    this.gameMenu = new GameMenu(this, HUD_DEPTH + 40, fontData, this.cache.json.get(TINY_FONT_DATA) as SpriteFontData | undefined, this.cache.json.get(SMALL_FONT_DATA) as SpriteFontData | undefined);
+    this.smallFont = this.cache.json.exists(SMALL_FONT_DATA) ? new SpriteFont(this.cache.json.get(SMALL_FONT_DATA) as SpriteFontData) : null;
+    this.dialogueFont = fontData ? new SpriteFont(fontData) : null;
     this.menuFarmer = new FarmerSprite(this, this.appearance, this.params.clothing, this.featureXOffset, this.featureYOffset, true);
 
     const kb = this.input.keyboard!;
@@ -1096,11 +1102,36 @@ export class World extends Phaser.Scene {
       shirt: { index: shirt.spriteIndex, color: rgb(shirt.color) },
       pants: { index: pants.spriteIndex, color: rgb(pants.color) },
       strings: { farmName: ui.Inventory_FarmName ?? "{0} Farm", funds: ui.Inventory_CurrentFunds ?? "Current Funds: {0}g", earnings: ui.Inventory_TotalEarnings ?? "Total Earnings: {0}g" },
-    }, pointer);
+    }, pointer, this.tooltipFor(menu.open ? state.inventory[menu.hoveredSlot(w, h, pointer.x, pointer.y)] ?? null : null), { energy: ui.ItemHover_Energy ?? "{0} Energy", health: ui.ItemHover_Health ?? "{0} Health" });
     if (menu.open) {
       const l = gameMenuLayout(w, h);
       this.menuFarmer?.update({ frame: 0, ms: 0, flip: false, offsetY: 0 } as unknown as Parameters<FarmerSprite["update"]>[0], Facing.Down, l.farmer.x, l.farmer.y, 0, () => HUD_DEPTH + 41);
     } else this.menuFarmer?.hide();
+  }
+
+  private tooltipFor(item: Item | null): TooltipContent | null {
+    if (!item || !this.smallFont || !this.dialogueFont) return null;
+    const { type, id } = parseId(item.id);
+    const cs = this.params.strings["Strings\\StringsFromCSFiles"] ?? {};
+    let title = id, description = "", category = "", color = 0x000000, edibility: number | null = null;
+    if (type === "O") {
+      const data = this.params.items.objects[id] as { DisplayName?: string; Description?: string; Category?: number; Edibility?: number; Type?: string } | undefined;
+      title = this.localized(data?.DisplayName) || id;
+      description = this.localized(data?.Description);
+      const key = categoryNameKey(data?.Category ?? 0);
+      category = key && !key.startsWith("1_6:") ? cs[key] ?? "" : "";
+      color = data?.Type === "Arch" ? ARCH_CATEGORY_COLOR : categoryColor(data?.Category ?? 0);
+      const e = data?.Edibility ?? -300;
+      edibility = e !== -300 ? e : null;
+    } else {
+      const data = (type === "W" ? this.params.items.weapons[id] : this.params.items.tools[id]) as { DisplayName?: string; Description?: string } | undefined;
+      title = this.localized(data?.DisplayName) || id;
+      description = this.localized(data?.Description);
+      category = cs["Tool.cs.14307"] ?? "Tool";
+      color = TOOL_CATEGORY_COLOR;
+    }
+    description = parseText(description, this.smallFont, descriptionWidth(title, this.dialogueFont));
+    return { title, text: description, category, categoryColor: color, edibility, quality: item.quality ?? 0 };
   }
 
   private isBirthday(name: string) {

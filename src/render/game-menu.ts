@@ -4,10 +4,12 @@ import { MENU_TEXTURE } from "./toolbar.ts";
 import { drawHorizontalPartition, drawInventoryGrid, drawMenuBox, drawShadowText, inventorySlotAt, menuTile, TEXT_COLOR } from "./menu-parts.ts";
 import { drawItemInMenu } from "./toolbar.ts";
 import type { Item, ItemData } from "../world/items.ts";
+import { drawTooltip, type TooltipContent } from "./tooltip.ts";
 
 const CURSORS = "LooseSprites/Cursors";
 const CURSORS_16 = "LooseSprites/Cursors_1_6";
 const DIALOGUE_FONT = "Fonts/SpriteFont1";
+const SMALL_FONT = "Fonts/SmallFont";
 const SHIRTS = "Characters/Farmer/shirts";
 const PANTS = "Characters/Farmer/pants";
 
@@ -85,11 +87,19 @@ export class GameMenu {
   heldFrom = -1;
   trashLidRotation = 0;
 
-  constructor(scene: Phaser.Scene, depth: number, dialogueFont: SpriteFontData | undefined, tinyFont: SpriteFontData | undefined) {
+  private readonly small: SpriteFont | null;
+
+  constructor(scene: Phaser.Scene, depth: number, dialogueFont: SpriteFontData | undefined, tinyFont: SpriteFontData | undefined, smallFont?: SpriteFontData) {
     this.back = new UiBatch(scene, depth);
     this.front = new UiBatch(scene, depth + 2);
     this.font = dialogueFont ? new SpriteFont(dialogueFont) : null;
     this.tiny = tinyFont ? new SpriteFont(tinyFont) : null;
+    this.small = smallFont ? new SpriteFont(smallFont) : null;
+  }
+
+  hoveredSlot(uiWidth: number, uiHeight: number, px: number, py: number) {
+    const l = gameMenuLayout(uiWidth, uiHeight);
+    return inventorySlotAt(px, py, l.inventory.x, l.inventory.y, true);
   }
 
   hit(uiWidth: number, uiHeight: number, px: number, py: number) {
@@ -103,7 +113,7 @@ export class GameMenu {
     return null;
   }
 
-  draw(uiWidth: number, uiHeight: number, items: (Item | null)[], data: ItemData, current: number, maxItems: number, info: InventoryPageInfo, mouse: { x: number; y: number }) {
+  draw(uiWidth: number, uiHeight: number, items: (Item | null)[], data: ItemData, current: number, maxItems: number, info: InventoryPageInfo, mouse: { x: number; y: number }, tooltip: TooltipContent | null = null, energyStrings = { energy: "{0} Energy", health: "{0} Health" }) {
     const b = this.back, f = this.front;
     b.begin();
     f.begin();
@@ -146,6 +156,7 @@ export class GameMenu {
       f.draw({ texture: CURSORS, sx: 564, sy: 129, sw: 18, sh: 10, x: l.trash.x + 60, y: l.trash.y + 40, originX: 16 / 18, originY: 1, scaleX: 4, rotation: this.trashLidRotation });
       f.draw({ texture: CURSORS, sx: 337, sy: 494, sw: 12, sh: 12, x: l.close.x, y: l.close.y, scaleX: 4 });
       if (this.held) drawItemInMenu(f, this.held, mouse.x + 16, mouse.y + 16, 1, 1, data);
+      if (tooltip && this.small && this.font) drawTooltip(f, { small: this.small, smallTexture: SMALL_FONT, dialogue: this.font, dialogueTexture: DIALOGUE_FONT }, tooltip, mouse, this.held ? 40 : 0, { w: uiWidth, h: uiHeight }, energyStrings);
     }
     b.end();
     f.end();
