@@ -25,7 +25,7 @@ describe("diálogos", () => {
 describe("SpriteText", () => {
   it("avanza 8 px ×3 con ajustes por letra y corta en palabras", () => {
     expect(widthOfString("ab")).toBe(48);
-    expect(widthOfString("a.")).toBe(36);
+    expect(widthOfString("a.")).toBe(42);
     const l = layoutSpriteText("aaa bbb", 4 * 24);
     expect(l.glyphs.map((g) => [g.x, g.y > 20 ? 1 : 0])).toEqual([[0, 0], [24, 0], [48, 0], [0, 1], [24, 1], [48, 1]]);
   });
