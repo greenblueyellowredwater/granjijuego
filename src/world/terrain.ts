@@ -28,7 +28,7 @@ export interface TerrainData {
 }
 
 export type Entity =
-  | { kind: "tree"; x: number; y: number; treeId: string; stage: number; flipped: boolean }
+  | { kind: "tree"; x: number; y: number; treeId: string; stage: number; flipped: boolean; health?: number; stump?: boolean }
   | { kind: "fruitTree"; x: number; y: number; treeId: string; stage: number }
   | { kind: "object"; x: number; y: number; itemId: string }
   | { kind: "clump"; x: number; y: number; index: number; w: number; h: number }
@@ -58,7 +58,7 @@ const TREE_FADE_IN = 0.05;
 const TREE_FADE_OUT = 0.09;
 
 export function treeFadeRect(e: Extract<Entity, { kind: "tree" }>): Rect | null {
-  if (e.stage < 5) return null;
+  if (e.stage < 5 || e.stump) return null;
   return { x: TILE * (e.x - 1), y: TILE * (e.y - 5), w: 192, h: 288 };
 }
 
@@ -320,6 +320,9 @@ export function drawOps(e: Entity, data: TerrainData, season: SeasonName, grass?
       const texture = treeTexture(info, season);
       if (!texture) return [];
       const bottom = py + TILE;
+      if (e.stage >= 5 && e.stump) {
+        return [{ texture, sx: 32, sy: 96, sw: 16, sh: 32, x: px, y: py - 64, depth: bottom / 10000, flip: e.flipped }];
+      }
       if (e.stage >= 5) {
         const shadow = isLeafy(info, season) ? { texture: CURSORS, ...TREE_SHADOW_LEAFY } : { texture: CURSORS_16, ...TREE_SHADOW_BARE };
         return [

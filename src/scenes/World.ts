@@ -36,6 +36,7 @@ import { afterHarvest, cropDrawMath, harvestQuality, isHarvestable, isInSeason, 
 import { dayUpdateLocations } from "../world/day.ts";
 import { debrisDrops, debrisKind, spawnDebris, stepDebris, toolBreaks, type ItemDebris } from "../world/debris.ts";
 import { itemSprite } from "../world/items.ts";
+import { FALL_DROPS, hitTree, TreeMotion, type TreeEntity } from "../world/trees.ts";
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canTill, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
@@ -174,7 +175,8 @@ export class World extends Phaser.Scene {
   private running = true;
   private entityImages = new Map<Entity, Phaser.GameObjects.Image[]>();
   private drops: { d: ItemDebris; img: Phaser.GameObjects.Image | null; shadow: Phaser.GameObjects.Image | null }[] = [];
-  private fadingTrees: { rect: Rect; alpha: number; images: Phaser.GameObjects.Image[] }[] = [];
+  private fadingTrees: { rect: Rect; alpha: number; images: Phaser.GameObjects.Image[]; entity?: Entity }[] = [];
+  private treeMotions = new Map<TreeEntity, TreeMotion>();
   private water: { grid: WaterGrid; state: WaterState; tint: number; alpha: number; pool: Phaser.GameObjects.Image[] } | null = null;
   private ticks = 0;
   private lightSources: LightSource[] = [];
@@ -213,6 +215,7 @@ export class World extends Phaser.Scene {
     this.animator = new FarmerAnimator();
     this.fadingTrees = [];
     this.entityImages = new Map();
+    this.treeMotions = new Map();
     this.drops = [];
     this.water = null;
     this.ticks = 0;
@@ -330,7 +333,7 @@ export class World extends Phaser.Scene {
       this.entityImages.set(e, all.map((x) => x.image).filter((i): i is Phaser.GameObjects.Image => i !== null));
       const images = all.filter((x) => x.op.fades && x.image).map((x) => x.image!);
       const rect = e.kind === "tree" ? treeFadeRect(e) : null;
-      if (rect && images.length) this.fadingTrees.push({ rect, alpha: 1, images });
+      if (rect && images.length) this.fadingTrees.push({ rect, alpha: 1, images, entity: e });
     }
   }
 
@@ -344,6 +347,49 @@ export class World extends Phaser.Scene {
 
   private dropItems(ids: string[], tx: number, ty: number) {
     for (const id of ids) this.drops.push({ d: spawnDebris(`(O)${id}`, tx, ty), img: null, shadow: null });
+  }
+
+  private hitTreeAt(tx: number, ty: number, tool: string) {
+    const tree = this.entities.find((e): e is TreeEntity => e.kind === "tree" && e.x === tx && e.y === ty);
+    if (!tree) return false;
+    const hit = hitTree(tree, tool);
+    if (hit.result === "none") return false;
+    const fromRight = this.body.x + 32 > tx * TILE + 32;
+    const motion = this.treeMotions.get(tree) ?? new TreeMotion();
+    this.treeMotions.set(tree, motion);
+    if (hit.result === "shake") motion.shake(fromRight, tree.stage >= 5);
+    if (hit.result === "fall") motion.fall(fromRight);
+    if (hit.result === "destroyed") {
+      this.treeMotions.delete(tree);
+      this.removeEntity(tree);
+      this.fadingTrees = this.fadingTrees.filter((f) => f.entity !== tree);
+    }
+    for (const d of hit.drops) this.dropItems(Array(d.count).fill(d.id), tx, ty);
+    return true;
+  }
+
+  private canopyOf(tree: TreeEntity) {
+    return (this.entityImages.get(tree) ?? []).find((img) => img.active && img.frame.width === 48);
+  }
+
+  private tickTrees() {
+    for (const [tree, motion] of this.treeMotions) {
+      const result = motion.tick(tree.stage >= 5);
+      const canopy = this.canopyOf(tree);
+      if (canopy) canopy.setOrigin(0.5, 1).setPosition(tree.x * TILE + 32, tree.y * TILE + 64).setRotation(motion.rotation);
+      if (result === "fallen") {
+        const images = this.entityImages.get(tree) ?? [];
+        const keep = images.filter((img) => img.active && img.frame.width === 16);
+        for (const img of images) if (!keep.includes(img)) img.destroy();
+        this.entityImages.set(tree, keep);
+        this.fadingTrees = this.fadingTrees.filter((f) => f.entity !== tree);
+        for (const img of keep) img.setAlpha(1);
+        const side = motion.shakeLeft ? -4 : 4;
+        for (const d of FALL_DROPS) this.dropItems(Array(d.count).fill(d.id), tree.x + side, tree.y);
+        this.treeMotions.delete(tree);
+        this.location.setSolids(this.entities.flatMap((x) => this.solidsOf(x)));
+      } else if (!motion.falling && motion.maxShake === 0 && motion.rotation === 0) this.treeMotions.delete(tree);
+    }
   }
 
   private hitObjectAt(tx: number, ty: number, tool: string) {
@@ -580,11 +626,12 @@ export class World extends Phaser.Scene {
     const tx = Math.floor(this.tool.target.x / TILE), ty = Math.floor(this.tool.target.y / TILE);
     if (this.tool.kind === "scythe") {
       this.hitObjectAt(tx, ty, "scythe");
+      this.hitTreeAt(tx, ty, "scythe");
       const grass = this.entities.find((e) => e.kind === "grass" && e.x === tx && e.y === ty);
       if (grass) this.removeEntity(grass);
       return;
     }
-    if (this.hitObjectAt(tx, ty, this.tool.kind)) {
+    if (this.hitTreeAt(tx, ty, this.tool.kind) || this.hitObjectAt(tx, ty, this.tool.kind)) {
       state.stamina -= toolStaminaCost(1, 0);
       return;
     }
@@ -930,6 +977,7 @@ export class World extends Phaser.Scene {
     if (!this.canMove) pressed.clear();
     this.tickTool();
     this.updateDrops();
+    this.tickTrees();
     const before = { x: this.body.x, y: this.body.y };
     this.running = !this.keys.SHIFT.isDown;
     const result = step(this.location, this.body, pressed, this.running, TICK_MS);
