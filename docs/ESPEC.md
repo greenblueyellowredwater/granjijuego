@@ -941,6 +941,47 @@ Aproximaciones: sin mini-retrato en la pestaña y sin experiencia de pesca, comb
 
 Aproximaciones: sin estrellitas ni animación de entrada y sin perks inmediatos de profesiones (vida de combate).
 
+## Spec S17: resumen de envíos nocturno (`ShippingMenu`)
+
+**Cuándo**: si se envió algo en el día, al dormir y antes de las subidas de nivel. Primero se suma el dinero y después se muestra el resumen. OK (clic o X, solo cuando termina la intro) sigue con el resto de la noche.
+
+**Categorías** (`getCategoryIndexForObject`): 0 cultivo, 1 recolección, 2 pesca, 3 minería, 4 otros, 5 total.
+- Los ids `(O)296, 396, 402, 406, 410, 414, 418` van a recolección.
+- Las conservas tipo 4, 5 y 10 (pescado ahumado, huevas, etc.) van a pesca.
+- Por categoría:
+
+  | Categoría del ítem | Grupo |
+  | --- | --- |
+  | −81, −27, −23 | Recolección |
+  | −80, −79, −75, −26, −14, −6, −5 | Cultivo |
+  | −21, −20, −4 | Pesca |
+  | −15, −12, −2 | Minería |
+  | Resto (incluye semillas −74 y recursos −16) | Otros |
+
+- Las pilas iguales (id y calidad) se consolidan. Valor = `sellToStorePrice · cantidad`.
+
+**Dibujo** (cielo despejado):
+- Cielo: `Cursors (639,858,1,184)` estirado a pantalla.
+- Estrellas: `(0,1453,639,195)` ×4 en x = 0 y 2556.
+- Colinas traseras `(0, 737|1034 invierno, 639, 48)` ×4 espejadas en `H−192`, color (0,20,40) (invierno: blanco·0,25), alfa `0,65 − t`.
+- Colinas delanteras `(…, 639, 32)` en `H−128`, color (0,32,20) (invierno: blanco·0,5).
+- Ventanita `(653,880,10,10)` en `(160, H−104)`.
+- Todo se desvanece con `1 − intro/3500`.
+- Filas `i` en `(cx+288, cy−300+108i)`. Cada fila aparece cuando `intro < 2500 − 500i`; el total aparece con la intro ya negativa.
+  - Si la categoría tiene ítems: botón `(392,361,10,11)` y marco `(293,360,24,24)` en `p+(−104,−16)`, con el primer ítem en `p+(−88,−4)`.
+  - Caja `textureBox (384,373,18,18)` ×4 en `(p.x−620, p.y−20, 512, 104)`, con el nombre de `ShippingMenu.cs.11389..94` en SpriteText en `(p.x−600, p.y+4)`.
+  - Seis casillas `(355,476,7,11)` desde `p.x−312`, cada 24.
+  - Dial de 7 dígitos `(286, 502−8d, 5, 8)` en marrón desde `p.x−332`.
+  - Moneda `(408,476,9,11)` en `p.x−164`.
+  - `p = fila + (12, −8)`.
+- Cartel de fecha de ayer (`drawStringWithScrollCenteredAt`) en `fila0 − 128`, si es ≥ 0. Rollo `(325,318,12,18)` + `(337,318,1,18)` estirado al ancho del texto + `(338,318,12,18)`, en `y−12`.
+- OK `(128,256,64,64)` en `(cx+216, cy+236)`.
+
+Aproximaciones:
+- Sin variante de lluvia (nubes) ni luna del día 28.
+- Sin la estrella fugaz ni el detalle por categoría (botón +).
+- Sin animación de salida.
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:

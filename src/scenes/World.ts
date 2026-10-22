@@ -11,6 +11,8 @@ import { FarmerSprite, farmerTextureKeys } from "../render/farmer.ts";
 import { DEFAULT_APPEARANCE, pantsInfo, shirtInfo, type ClothingData } from "../world/farmer-appearance.ts";
 import { GameMenu } from "../render/game-menu.ts";
 import { LevelUpMenu } from "../render/levelup-menu.ts";
+import { ShippingMenu } from "../render/shipping-menu.ts";
+import { summarizeShipping } from "../world/shipping.ts";
 import { extraInfoKeys, learnDefaultRecipes, professionChoices, recipesUnlockedAt } from "../world/levelup.ts";
 import { sortSocialEntries, type SocialEntry } from "../render/social-page.ts";
 import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, parseText, TOOL_CATEGORY_COLOR, type TooltipContent } from "../render/tooltip.ts";
@@ -210,6 +212,7 @@ export class World extends Phaser.Scene {
   private shop: ShopMenu | null = null;
   private gameMenu: GameMenu | null = null;
   private levelUp: LevelUpMenu | null = null;
+  private shipping: ShippingMenu | null = null;
   private menuFarmer: FarmerSprite | null = null;
   private smallFont: SpriteFont | null = null;
   private dialogueFont: SpriteFont | null = null;
@@ -936,13 +939,14 @@ export class World extends Phaser.Scene {
     this.smallFont = this.cache.json.exists(SMALL_FONT_DATA) ? new SpriteFont(this.cache.json.get(SMALL_FONT_DATA) as SpriteFontData) : null;
     this.dialogueFont = fontData ? new SpriteFont(fontData) : null;
     learnDefaultRecipes(this.params.state, this.params.recipes);
+    this.shipping = new ShippingMenu(this, HUD_DEPTH + 55);
     this.levelUp = new LevelUpMenu(this, HUD_DEPTH + 60, fontData, this.cache.json.get(SMALL_FONT_DATA) as SpriteFontData | undefined);
     this.menuFarmer = new FarmerSprite(this, this.appearance, this.params.clothing, this.featureXOffset, this.featureYOffset, true);
 
     const kb = this.input.keyboard!;
     this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,X,E") as Record<string, Phaser.Input.Keyboard.Key>;
     kb.on("keydown-C", () => this.useToolButton());
-    kb.on("keydown-X", () => (this.levelUp?.current ? this.finishLevelUp() : this.interact()));
+    kb.on("keydown-X", () => (this.shipping?.summary ? this.finishShipping() : this.levelUp?.current ? this.finishLevelUp() : this.interact()));
     kb.on("keydown-E", () => this.toggleGameMenu());
     kb.on("keydown-ENTER", () => (this.dialogueBox?.open ? this.dialogueBox.advance() : this.question?.confirm()));
     kb.on("keydown-SPACE", () => this.question?.confirm());
@@ -957,6 +961,10 @@ export class World extends Phaser.Scene {
     for (const k of ["DOWN", "S"]) kb.on(`keydown-${k}`, () => this.question?.move(1));
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (this.shipping?.summary) {
+        if (this.shipping.hitOk(this.cameras.main.width, this.cameras.main.height, p.x, p.y)) this.finishShipping();
+        return;
+      }
       if (this.levelUp?.current) {
         const hit = this.levelUp.hit(this.cameras.main.width, this.cameras.main.height, p.x, p.y);
         if (hit?.kind === "ok") this.finishLevelUp();
@@ -1388,11 +1396,14 @@ export class World extends Phaser.Scene {
     const { state, store, clock } = this.params;
     this.cameras.main.fade(1000, 0, 0, 0, true);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      for (const item of state.shipping) {
+      const shipped = state.shipping;
+      const yesterday = this.dateString(state.dayOfMonth, state.season, state.year);
+      for (const item of shipped) {
         const data = this.params.items.objects[parseId(item.id).id];
         earn(state, sellPrice(data?.Price ?? 0, item.quality ?? 0) * item.stack);
       }
       state.shipping = [];
+      this.pendingShipping = shipped.length ? { items: shipped, date: yesterday } : null;
       Object.assign(state, nextDay(state));
       const gsq = this.gsqState();
       const random = daySaveRandom(gsq);
@@ -1415,9 +1426,33 @@ export class World extends Phaser.Scene {
 
   private nightMenusDone: (() => void) | null = null;
 
+  private pendingShipping: { items: Item[]; date: string } | null = null;
+
   private runNightMenus(done: () => void) {
     this.nightMenusDone = done;
+    const pending = this.pendingShipping;
+    this.pendingShipping = null;
+    if (pending && this.shipping) {
+      this.cameras.main.resetFX();
+      const objects = this.params.items.objects;
+      const summary = summarizeShipping(pending.items, (it) => objects[parseId(it.id).id]?.Category, (it) => sellPrice(objects[parseId(it.id).id]?.Price ?? 0, it.quality ?? 0));
+      const cs = this.params.strings["Strings\\StringsFromCSFiles"] ?? {};
+      this.shipping.show(summary, [11389, 11390, 11391, 11392, 11393, 11394].map((k) => cs[`ShippingMenu.cs.${k}`] ?? ""), pending.date, this.params.state.season === "winter");
+      return;
+    }
     this.nextNightMenu();
+  }
+
+  private finishShipping() {
+    if (!this.shipping?.summary || this.shipping.introTimer > 0) return;
+    this.shipping.summary = null;
+    this.nextNightMenu();
+  }
+
+  private dateString(day: number, season: string, year: number) {
+    const cs = this.params.strings["Strings\\StringsFromCSFiles"] ?? {};
+    const name = cs[`Utility.cs.${5680 + Math.max(0, SEASON_ORDER.indexOf(season as (typeof SEASON_ORDER)[number]))}`] ?? season;
+    return (cs["Utility.cs.5678"] ?? "Day {0} of {1}, Year {2}").replace("{0}", String(day)).replace("{1}", name).replace("{2}", String(year));
   }
 
   private nextNightMenu() {
@@ -1499,10 +1534,12 @@ export class World extends Phaser.Scene {
     this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
     this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.dialogueBox?.open && !this.question?.open);
     this.dialogueBox?.update(this.game.loop.rawDelta);
+    this.shipping?.update(Math.min(250, this.game.loop.rawDelta));
     const pointer = this.input.activePointer;
     this.shop?.draw(this.cameras.main.width, this.cameras.main.height, (id) => this.itemName(id), state.money, state.inventory, this.params.items, { x: pointer.x, y: pointer.y }, (item) => parseId(item.id).type === "O" && (this.params.items.objects[parseId(item.id).id]?.Price ?? 0) > 0);
     const speaker = this.dialogueBox?.speaker ? `Portraits/${this.dialogueBox.speaker}` : null;
     this.drawGameMenu(pointer);
+    this.shipping?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items);
     this.levelUp?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items, this.params.strings["Strings\\UI"] ?? {}, { x: pointer.x, y: pointer.y });
     this.dialogueBox?.draw(this.cameras.main.width, this.cameras.main.height, speaker && this.textures.exists(speaker) ? speaker : null);
     this.hud?.draw(
