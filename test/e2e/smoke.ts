@@ -115,6 +115,28 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
+    "compra semillas en la tienda de Pierre",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=SeedShop&x=4&y=19&time=900`);
+      await page.evaluate(`localStorage.clear()`);
+      await page.goto(`${BASE}/?map=SeedShop&x=4&y=19&time=900`);
+      await waitStatus(page, /SeedShop .* tile 4,19/);
+      await new Promise((r) => setTimeout(r, 1500));
+      await world(`(w.body.facing = 0, 1)`);
+      await page.keyboard.press("x");
+      for (let i = 0; i < 50 && !(await world(`w.shop.open`)); i++) await new Promise((r) => setTimeout(r, 100));
+      if (!(await world(`w.shop.open`))) throw new Error("No abrió la tienda");
+      await page.mouse.click(600, 130);
+      await new Promise((r) => setTimeout(r, 300));
+      const result = (await world(`JSON.stringify({ money: w.params.state.money, has: w.params.state.inventory.some(function (i) { return i && i.id === "(O)472"; }) })`)) as string;
+      if (result !== '{"money":480,"has":true}') throw new Error(`Compra inesperada: ${result}`);
+      await page.keyboard.press("Escape");
+      await new Promise((r) => setTimeout(r, 300));
+      if (await world(`w.shop.open`)) throw new Error("No cerró la tienda");
+    },
+  ],
+  [
     "abre el regalo, siembra, riega y cosecha una chirivía a los 4 días",
     async (page) => {
       const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);

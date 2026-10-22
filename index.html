@@ -6,7 +6,8 @@
     <title>stardew-ts</title>
     <style>
       html, body { margin: 0; height: 100%; background: #111; color: #ddd; font: 13px/1.4 ui-monospace, monospace; overflow: hidden; }
-      #hud { position: fixed; top: 8px; left: 8px; z-index: 2; background: #000a; padding: 8px 10px; border-radius: 6px; max-width: 420px; }
+      #hud { position: fixed; top: 8px; left: 8px; z-index: 2; background: #000a; padding: 8px 10px; border-radius: 6px; max-width: 420px; pointer-events: none; }
+      #hud select, #hud button { pointer-events: auto; }
       #hud select, #hud button { font: inherit; }
       #props { white-space: pre-wrap; color: #9cf; margin-top: 6px; max-height: 40vh; overflow: auto; }
       #missing { padding: 24px; max-width: 640px; }

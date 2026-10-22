@@ -42,6 +42,8 @@ import { npcFrame, type NpcState } from "../world/npc-sim.ts";
 import { DialogueBox } from "../render/dialogue-box.ts";
 import { dailyDialogue, dialogueChunks, parseDialogue } from "../world/dialogue.ts";
 import { SPRITE_TEXT_TEXTURE } from "../render/spritetext.ts";
+import { ShopMenu } from "../render/shop-menu.ts";
+import { objectBasePrice, shopStock, type ShopData } from "../world/shops.ts";
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canTill, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
@@ -143,6 +145,8 @@ export interface WorldData {
   setupNpcs: () => void;
   dialogues: Record<string, Record<string, string>>;
   rainyDialogue: Record<string, string>;
+  shops: Record<string, ShopData>;
+  strings: Record<string, Record<string, string>>;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
 }
@@ -189,6 +193,7 @@ export class World extends Phaser.Scene {
   private npcImages = new Map<string, { sprite: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image }>();
   private staticSolids: Rect[] = [];
   private dialogueBox: DialogueBox | null = null;
+  private shop: ShopMenu | null = null;
   private water: { grid: WaterGrid; state: WaterState; tint: number; alpha: number; pool: Phaser.GameObjects.Image[] } | null = null;
   private ticks = 0;
   private lightSources: LightSource[] = [];
@@ -880,6 +885,7 @@ export class World extends Phaser.Scene {
     this.hud = fontData ? new Hud(this, fontData, this.params.text) : null;
     this.question = fontData ? new QuestionBox(this, fontData) : null;
     this.dialogueBox = new DialogueBox(this, HUD_DEPTH + 20);
+    this.shop = new ShopMenu(this, HUD_DEPTH + 30);
 
     const kb = this.input.keyboard!;
     this.keys = kb.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SHIFT,X,E") as Record<string, Phaser.Input.Keyboard.Key>;
@@ -888,13 +894,17 @@ export class World extends Phaser.Scene {
     kb.on("keydown-E", () => this.interact());
     kb.on("keydown-ENTER", () => (this.dialogueBox?.open ? this.dialogueBox.advance() : this.question?.confirm()));
     kb.on("keydown-SPACE", () => this.question?.confirm());
-    kb.on("keydown-ESC", () => this.question?.cancel());
+    kb.on("keydown-ESC", () => (this.shop?.open ? this.shop.close() : this.question?.cancel()));
     SLOT_KEYS.forEach((k, i) => kb.on(`keydown-${k}`, () => this.selectSlot(i)));
-    this.input.on("wheel", (_p: unknown, _o: unknown, _dx: number, dy: number) => this.selectSlot((this.params.state.currentToolIndex + (dy > 0 ? 1 : -1) + 12) % 12));
+    this.input.on("wheel", (_p: unknown, _o: unknown, _dx: number, dy: number) => this.shop?.open ? this.shop.scrollBy(dy > 0 ? 1 : -1) : this.selectSlot((this.params.state.currentToolIndex + (dy > 0 ? 1 : -1) + 12) % 12));
     for (const k of ["UP", "W"]) kb.on(`keydown-${k}`, () => this.question?.move(-1));
     for (const k of ["DOWN", "S"]) kb.on(`keydown-${k}`, () => this.question?.move(1));
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (this.shop?.open) {
+        this.shopClick(p.x, p.y);
+        return;
+      }
       if (this.dialogueBox?.open) {
         this.dialogueBox.advance();
         return;
@@ -988,6 +998,65 @@ export class World extends Phaser.Scene {
     return true;
   }
 
+  private localized(text: string | null | undefined) {
+    if (!text) return "";
+    return text.replace(/\[LocalizedText ([^\]:]+):([^\]\s]+)\]/g, (_m, file: string, key: string) => this.params.strings[file]?.[key] ?? key);
+  }
+
+  private itemName(qualified: string) {
+    const { type, id } = parseId(qualified);
+    if (type === "O") return this.localized((this.params.items.objects[id] as { DisplayName?: string } | undefined)?.DisplayName) || id;
+    return id;
+  }
+
+  private tryAction(action: string) {
+    const words = action.trim().split(/\s+/);
+    if (words[0] === "Buy" && this.location.name === "SeedShop") {
+      const pierre = this.params.npcs.in("SeedShop").find((n) => n.name === "Pierre");
+      if (!pierre || Math.round(pierre.x / 64) !== 4 || Math.round(pierre.y / 64) !== 17) {
+        this.message = this.localized(this.params.strings["Strings\\StringsFromCSFiles"]?.["GameLocation.cs.8525"]);
+        return true;
+      }
+      return this.openShop("SeedShop");
+    }
+    return false;
+  }
+
+  private openShop(id: string) {
+    const data = this.params.shops[id];
+    if (!data || !this.shop) return false;
+    const gsq = this.gsqState();
+    const stock = shopStock(data, (q, raw) => objectBasePrice(this.params.items.objects, q, raw, gsq.year), { state: gsq, random: daySaveRandom(gsq) });
+    this.shop.show(stock);
+    return true;
+  }
+
+  private shopClick(px: number, py: number) {
+    const shop = this.shop!;
+    const cam = this.cameras.main;
+    const hit = shop.hit(cam.width, cam.height, px, py);
+    const state = this.params.state;
+    if (!hit) return;
+    if (hit.kind === "close") shop.close();
+    else if (hit.kind === "up") shop.scrollBy(-1);
+    else if (hit.kind === "down") shop.scrollBy(1);
+    else if (hit.kind === "buy") {
+      const entry = shop.stock[hit.index];
+      if (state.money < entry.price || entry.stock <= 0) return;
+      if (addItem(state.inventory, { id: entry.id, stack: 1 })) return;
+      state.money -= entry.price;
+      entry.stock--;
+    } else if (hit.kind === "sell") {
+      const item = state.inventory[hit.slot];
+      if (!item || parseId(item.id).type !== "O") return;
+      const data = this.params.items.objects[parseId(item.id).id];
+      const price = sellPrice(data?.Price ?? 0, item.quality ?? 0);
+      if (price <= 0) return;
+      state.money += price * item.stack;
+      state.inventory[hit.slot] = null;
+    }
+  }
+
   private interact() {
     if (!this.location || this.warping) return;
     if (this.dialogueBox?.open) {
@@ -1008,6 +1077,7 @@ export class World extends Phaser.Scene {
     const c = centerTile(this.body);
     if (this.tryHarvest(c.x, c.y)) return;
     const action = this.location.action(t.x, t.y);
+    if (action && this.tryAction(action)) return;
     if (!action) return;
     const warp = parseActionWarp(action);
     if (warp) this.warpTo(warp.target, warp.x, warp.y);
@@ -1030,7 +1100,7 @@ export class World extends Phaser.Scene {
   }
 
   private get timePasses() {
-    return !this.question?.open && !this.dialogueBox?.open && !this.endingDay && !this.warping;
+    return !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.endingDay && !this.warping;
   }
 
   private get canMove() {
@@ -1119,6 +1189,8 @@ export class World extends Phaser.Scene {
     this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
     this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items);
     this.dialogueBox?.update(this.game.loop.rawDelta);
+    const pointer = this.input.activePointer;
+    this.shop?.draw(this.cameras.main.width, this.cameras.main.height, (id) => this.itemName(id), state.money, state.inventory, this.params.items, { x: pointer.x, y: pointer.y });
     const speaker = this.dialogueBox?.speaker ? `Portraits/${this.dialogueBox.speaker}` : null;
     this.dialogueBox?.draw(this.cameras.main.width, this.cameras.main.height, speaker && this.textures.exists(speaker) ? speaker : null);
     this.hud?.draw(

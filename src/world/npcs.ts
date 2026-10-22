@@ -60,6 +60,18 @@ export class NpcManager implements NpcWorld {
     }
   }
 
+  fastForward(time: number) {
+    for (const n of this.npcs) {
+      while (n.next < n.schedule.length && n.schedule[n.next].time <= time) {
+        const e = n.schedule[n.next++];
+        n.location = e.location;
+        n.x = e.x * 64;
+        n.y = e.y * 64;
+        n.facing = e.facing;
+      }
+    }
+  }
+
   homeOf(name: string) {
     return this.homes.get(name) ?? null;
   }

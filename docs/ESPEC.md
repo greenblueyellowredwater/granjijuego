@@ -595,6 +595,38 @@ Fuente: `NPC.TryLoadSchedule`, `parseMasterScheduleImpl`, `pathfindToNextSchedul
 - Avance `8·3 + ajuste(siguiente)·3` más `ajuste(c)·3`. Ajustes: `,` `.` −2; `! i j l ¡ ı…` −1; `^` −8; `$` +1.
 - Línea de 18·3 px. Corta antes de la palabra que no entra. Las mayúsculas suben 3 px.
 
+## Spec S10: tiendas (`Data/Shops`, `ShopMenu`)
+
+**Apertura**: la propiedad de tile `Action` = `Buy General` abre la tienda `SeedShop`, solo si un dueño de `Owners` está dentro del rectángulo de dueño. Para Pierre es el tile `(4,17)`, detrás del mostrador.
+
+**Stock** (`ShopBuilder.GetShopStock`), recorriendo `Items` en orden:
+- Se descarta la entrada si `Condition` es falsa (GSQ, spec S7). Las entradas con consultas de ítems (`RANDOM_ITEMS`, etc.) quedan pendientes de ItemQuery.
+- Precio base:
+  - Si `Price ≥ 0`, se usa `Price`.
+  - Si no, el precio de venta del objeto: `Price` de `Data/Objects` ×2 (truncado, por calidad `1+0,25·q`).
+  - Con `UseObjectDataPrice`, el `Price` crudo.
+  - Recursos con precio fijo, año 1 / año 2+: madera 388 10/50, piedra 390 20/100, carbón 382 120/250, cobre 378 80/160, hierro 380 150/250, oro 384 350/750.
+- Primero se aplican los `PriceModifiers` de la tienda según `PriceModifierMode`, salvo `IgnoreShopPriceModifiers`. Después, los del ítem en modo apilado.
+  - Modo 0 apila en orden; modo 1 toma el mínimo y modo 2 el máximo entre los resultados individuales sobre el valor base.
+  - Modificación 0 suma, 1 resta, 2 multiplica, 3 divide y 4 reemplaza. `RandomAmount` elige uno al azar.
+- El precio final se trunca. `AvailableStock < 0` significa ilimitado.
+
+**Menú** (en píxeles de UI):
+- Ancho 1000+2·40, alto 600+2·40, centrado. Fondo negro a 0,75 sobre todo.
+- Cuatro filas de alto `(alto−256)/4`, empezando en `(x+16, y+16)`, cada una con caja `(384,396,15,15)` de Cursors.
+- Fila: ícono con fondo `(296,363,18,18)`, nombre en SpriteText en `x+104` y precio alineado a la derecha seguido de la moneda `(193,373,9,10)`. Si no alcanza el dinero, el precio va a media opacidad y la moneda a 0,25.
+- Al pasar el mouse, la fila se resalta en trigo a 0,35.
+- Inventario de 3×12 en la caja inferior derecha. Caja de dinero `(340,472,65,17)` a la izquierda, con dígitos en rojo oscuro.
+- Flechas de scroll `(421,459)` y `(421,472)` a la derecha, y botón de cierre `(337,494,12,12)`.
+
+**Interacción**:
+- Clic izquierdo en una fila: compra 1 si alcanza el dinero y entra en el inventario.
+- Clic en un ítem del inventario con precio: lo vende por el precio de envío (spec S8) por la pila.
+- La rueda del mouse o las flechas hacen scroll de a una fila. Esc o el botón de cierre cierran el menú.
+- El reloj no avanza con el menú abierto.
+
+Aproximaciones: no hay tooltip, ni compra con Shift para varias unidades, ni diálogo del dueño, ni animación de ítem en mano.
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:

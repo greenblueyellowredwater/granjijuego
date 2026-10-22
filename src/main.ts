@@ -11,6 +11,7 @@ import type { CropData } from "./world/crops.ts";
 import type { BuildingData } from "./world/buildings.ts";
 import { NpcManager, type CharacterData } from "./world/npcs.ts";
 import type { GraphWarp } from "./world/npc-sim.ts";
+import type { ShopData } from "./world/shops.ts";
 import { resolveMapPath } from "./scenes/World.ts";
 import type { ClothingData } from "./world/farmer-appearance.ts";
 
@@ -72,7 +73,7 @@ async function boot() {
   }
 
   const load = async (key: string) => (await fetch(contentUrl(key, "json"))).json();
-  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon, contexts, festivalDates, passiveFestivals, calendar, tools, weapons, crops, buildings, buildingStrings, characters, warps] = (await Promise.all([
+  const [locations, wildTrees, objects, shirts, pants, furniture, csStrings, locationStrings, lexicon, contexts, festivalDates, passiveFestivals, calendar, tools, weapons, crops, buildings, buildingStrings, characters, warps, shops, objectStrings] = (await Promise.all([
     load("Data/Locations"),
     load("Data/WildTrees"),
     load("Data/Objects"),
@@ -93,6 +94,8 @@ async function boot() {
     load("Strings/Buildings"),
     load("Data/Characters"),
     load("generated/warps").catch(() => ({})),
+    load("Data/Shops"),
+    load("Strings/Objects"),
   ])) as [
     LocationsData,
     TerrainData["wildTrees"],
@@ -114,6 +117,8 @@ async function boot() {
     Record<string, string>,
     Record<string, CharacterData>,
     Record<string, GraphWarp[]>,
+    Record<string, ShopData>,
+    Record<string, string>,
   ];
   const terrain: TerrainData = {
     wildTrees,
@@ -181,6 +186,7 @@ async function boot() {
   if (weatherOverride) state.weather = weatherOverride;
   const time = Number(params.get("time"));
   const clock = new GameClock(Number.isInteger(time) && time >= 600 && time <= 2600 ? time : 600);
+  npcs.fastForward(clock.time);
   game.scene.add("World", World, true, {
     manifest,
     season: state.season,
@@ -194,6 +200,8 @@ async function boot() {
     setupNpcs,
     dialogues,
     rainyDialogue,
+    shops,
+    strings: { "Strings\\Objects": objectStrings, "Strings\\StringsFromCSFiles": csStrings, "Strings\\Locations": locationStrings },
     items: {
       tools,
       weapons,
