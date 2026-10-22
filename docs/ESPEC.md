@@ -774,7 +774,7 @@ Aproximaciones:
 **Tienda**: su inventario usa el mismo `InventoryMenu`, sin `playerInventory` y con `showGrayedOutSlots`.
 
 Aproximaciones:
-- Solo funciona la pestaña de inventario.
+- Funcionan las pestañas de inventario, social (spec S14) y salir.
 - Sin mini-retrato en la pestaña de habilidades y sin botón de ordenar funcional.
 - Sin la capa azul nocturna sobre el granjero, sin animación de la tapa del tacho y sin tirar ítems fuera del menú.
 
@@ -811,6 +811,42 @@ Aproximaciones:
   - Fórmulas: energía `⌈e·2,5⌉ + calidad·e`; salud `trunc(energía·0,45f)` (0 si e<0).
 
 Aproximaciones: sin estadísticas de armas, buffs, precio con el catálogo de precios ni requisitos de recetas.
+
+## Spec S14: página social (`SocialPage`)
+
+**Entradas** (`FindSocialCharacters`): NPCs del mundo con `CanSocialize` verdadero (GSQ). Según `SocialTab`:
+- 0 (`UnknownUntilMet`): aparece como "???" sin amistad.
+- 1 (`AlwaysShown`): crea la amistad.
+- 2 (`HiddenUntilMet`): se omite sin amistad.
+- 3 (`HiddenAlways`): se omite.
+
+Orden:
+1. Puntos de amistad de mayor a menor; los nulos van al final.
+2. Orden de encuentro: el índice en `friendshipData` empezando en 1; los nulos van primero.
+3. Nombre visible.
+
+Corazones = `puntos/250`.
+
+**Marco y filas**:
+- Ancho del cuadro: 880+36. Cinco filas visibles desde `slotPosition`. La fila k tiene el sprite en `(x+44, y+104+112k)`.
+- Particiones horizontales chicas (tile 25 estirado en `x+32..w−64`) en `y+172`, `y+284`, `y+396` y `y+508`.
+- Particiones verticales (tile 26 en `y+96`, alto `h−128`) en `x+268`, `x+620` y `x+752`.
+- Retrato: `MugShotSourceRect`, o `(0, niño?4:0, 16, 24)` de `Characters/<nombre>`, a ×4.
+- Nombre en dialogueFont, centrado en `x+200`, a `y_fila + 48 − (romanceable ? 24 : 20)`. Si es romanceable, debajo va "(single)", centrado y con el fondo alineado al sprite.
+- Corazones h=0..9: `Cursors (211|218, 428, 7, 6)` ×4 en `(x+316+32h, y_fila+36)`.
+  - Lleno (211) si `h < nivel` o si está bloqueado.
+  - Bloqueado si es romanceable sin noviazgo y h ≥ 8: negro a 0,35.
+- Regalos (salvo niños):
+  - Ícono `Cursors2 (166,174,14,12)` en `(x+688, y−4)` con sombra (0,+4) a 0,2.
+  - Casillas `Cursors (227 / 236 marcada, 425, 9, 9)` en `x+680` (≥2 en la semana) y `x+720` (≥1), a `y+52`.
+- Charla: ícono `Cursors2 (180,175,13,11)` en `(x+808, y)` y casilla en `(x+816, y+52)` según `talkedToToday`.
+- Scroll:
+  - Flechas en `(x+w+16, y+64)` y `(x+w+16, y+h−64)`.
+  - Riel `textureBox Cursors (403,383,6,6)` ×4 de ancho 24, desde `y+116` y de alto `h−184`.
+  - Barra `(435,463,6,10)`.
+  - Se mueve con la rueda o las flechas.
+
+Aproximaciones: sin entrada del granjero propio ni de otros jugadores, sin estados de pareja o casamiento, sin perfil al hacer clic y sin tooltip de cumpleaños.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

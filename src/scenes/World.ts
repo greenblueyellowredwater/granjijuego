@@ -10,6 +10,7 @@ import { DEPTH } from "../render/tilemap.ts";
 import { FarmerSprite, farmerTextureKeys } from "../render/farmer.ts";
 import { DEFAULT_APPEARANCE, pantsInfo, shirtInfo, type ClothingData } from "../world/farmer-appearance.ts";
 import { GameMenu, gameMenuLayout } from "../render/game-menu.ts";
+import { sortSocialEntries, type SocialEntry } from "../render/social-page.ts";
 import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, parseText, TOOL_CATEGORY_COLOR, type TooltipContent } from "../render/tooltip.ts";
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
 import { dayTileGlows, locationLights, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
@@ -53,7 +54,7 @@ import { objectBasePrice, shopStock, type ShopData } from "../world/shops.ts";
 import { buildingDoor, buildingDrawOps, buildingSolids, defaultFarmBuildings, nearShippingBin, sellPrice, type BuildingData, type BuildingEntity } from "../world/buildings.ts";
 import { animationSprite, canTill, hoeDirtDrawOps, hoeDirtTexture, neighborMasks, tempSpriteFrame, type TempSprite } from "../world/farming.ts";
 import { hasOwnWeather, updateWeatherForNewDay, weatherFlags, type WeatherData, type WeatherFlags } from "../world/weather.ts";
-import { daySaveRandom, type GsqState } from "../world/gsq.ts";
+import { checkConditions, daySaveRandom, type GsqState } from "../world/gsq.ts";
 import {
   bedSleepTile,
   bedBox,
@@ -330,7 +331,7 @@ export class World extends Phaser.Scene {
     }
     textures.add(SPRITE_TEXT_TEXTURE);
     textures.add(EMOTE_TEXTURE);
-    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont"]) textures.add(t);
+    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont", "LooseSprites/Cursors2"]) textures.add(t);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
     }
@@ -931,7 +932,7 @@ export class World extends Phaser.Scene {
       else this.toggleGameMenu();
     });
     SLOT_KEYS.forEach((k, i) => kb.on(`keydown-${k}`, () => this.selectSlot(i)));
-    this.input.on("wheel", (_p: unknown, _o: unknown, _dx: number, dy: number) => this.shop?.open ? this.shop.scrollBy(dy > 0 ? 1 : -1) : this.selectSlot((this.params.state.currentToolIndex + (dy > 0 ? 1 : -1) + 12) % 12));
+    this.input.on("wheel", (_p: unknown, _o: unknown, _dx: number, dy: number) => this.gameMenu?.open ? this.gameMenu.social.scrollBy(dy > 0 ? 1 : -1, this.socialEntries().length) : this.shop?.open ? this.shop.scrollBy(dy > 0 ? 1 : -1) : this.selectSlot((this.params.state.currentToolIndex + (dy > 0 ? 1 : -1) + 12) % 12));
     for (const k of ["UP", "W"]) kb.on(`keydown-${k}`, () => this.question?.move(-1));
     for (const k of ["DOWN", "S"]) kb.on(`keydown-${k}`, () => this.question?.move(1));
     this.input.mouse?.disableContextMenu();
@@ -1064,6 +1065,10 @@ export class World extends Phaser.Scene {
     const hit = menu.hit(this.cameras.main.width, this.cameras.main.height, px, py);
     if (!hit) return;
     if (hit.kind === "close") this.closeGameMenu();
+    else if (hit.kind === "tab") {
+      if (hit.name === "inventory" || hit.name === "social") menu.tab = hit.name;
+      if (hit.name === "exit") this.closeGameMenu();
+    } else if (hit.kind === "up" || hit.kind === "down") menu.social.scrollBy(hit.kind === "up" ? -1 : 1, this.socialEntries().length);
     else if (hit.kind === "trash") menu.held = null;
     else if (hit.kind === "slot") {
       if (hit.slot >= MAX_ITEMS) return;
@@ -1102,11 +1107,42 @@ export class World extends Phaser.Scene {
       shirt: { index: shirt.spriteIndex, color: rgb(shirt.color) },
       pants: { index: pants.spriteIndex, color: rgb(pants.color) },
       strings: { farmName: ui.Inventory_FarmName ?? "{0} Farm", funds: ui.Inventory_CurrentFunds ?? "Current Funds: {0}g", earnings: ui.Inventory_TotalEarnings ?? "Total Earnings: {0}g" },
-    }, pointer, this.tooltipFor(menu.open ? state.inventory[menu.hoveredSlot(w, h, pointer.x, pointer.y)] ?? null : null), { energy: ui.ItemHover_Energy ?? "{0} Energy", health: ui.ItemHover_Health ?? "{0} Health" });
-    if (menu.open) {
+    }, pointer, this.tooltipFor(menu.open ? state.inventory[menu.hoveredSlot(w, h, pointer.x, pointer.y)] ?? null : null), { energy: ui.ItemHover_Energy ?? "{0} Energy", health: ui.ItemHover_Health ?? "{0} Health" }, menu.open && menu.tab === "social" ? { entries: this.socialEntries(), strings: cs } : undefined);
+    if (menu.open && menu.tab === "inventory") {
       const l = gameMenuLayout(w, h);
       this.menuFarmer?.update({ frame: 0, ms: 0, flip: false, offsetY: 0 } as unknown as Parameters<FarmerSprite["update"]>[0], Facing.Down, l.farmer.x, l.farmer.y, 0, () => HUD_DEPTH + 41);
     } else this.menuFarmer?.hide();
+  }
+
+  private socialEntries(): SocialEntry[] {
+    const { characters, state, strings } = this.params;
+    const names = strings["Strings\\NPCNames"] ?? {};
+    const met = Object.keys(state.friendship);
+    const entries: SocialEntry[] = [];
+    for (const [name, data] of Object.entries(characters)) {
+      const d = data as CharacterData & { SocialTab?: number; DisplayName?: string; Gender?: number; Age?: number; UnlockConditions?: string | null; MugShotSourceRect?: { X: number; Y: number; Width: number; Height: number } | null };
+      if (d.UnlockConditions) continue;
+      if (d.CanSocialize && !checkConditions(d.CanSocialize, { state: this.gsqState(), random: new DotNetRandom(0) })) continue;
+      const f = state.friendship[name];
+      const tab = d.SocialTab ?? 0;
+      if (tab === 3 || (tab === 2 && !f)) continue;
+      const display = this.localized(d.DisplayName) || names[name] || name;
+      const child = d.Age === 2;
+      const ms = d.MugShotSourceRect;
+      entries.push({
+        name,
+        displayName: !f && tab === 0 ? "???" : display,
+        points: f ? f.points : tab === 1 ? 0 : null,
+        orderMet: f ? met.indexOf(name) + 1 : null,
+        datable: !!d.CanBeRomanced,
+        female: d.Gender === 1,
+        child,
+        giftsThisWeek: (f as Friendship | undefined)?.giftsThisWeek ?? 0,
+        talkedToday: !!f?.talkedToday,
+        mugShot: ms ? { sx: ms.X, sy: ms.Y, sw: ms.Width, sh: ms.Height } : { sx: 0, sy: child ? 4 : 0, sw: 16, sh: 24 },
+      });
+    }
+    return sortSocialEntries(entries);
   }
 
   private tooltipFor(item: Item | null): TooltipContent | null {

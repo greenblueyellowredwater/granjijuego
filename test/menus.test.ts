@@ -56,3 +56,19 @@ describe("tooltips", async () => {
     expect([edge.x, edge.y]).toEqual([1280 - 122, 800 - 108]);
   });
 });
+
+describe("página social", async () => {
+  const { sortSocialEntries, heartSprite } = await import("../src/render/social-page.ts");
+  const e = (name: string, points: number | null, orderMet: number | null, datable = false) => ({ name, displayName: name, points, orderMet, datable, female: false, child: false, giftsThisWeek: 0, talkedToday: false, mugShot: null });
+
+  it("ordena por puntos, orden de encuentro y nombre", () => {
+    const sorted = sortSocialEntries([e("Zed", null, null), e("Bob", 0, null), e("Ann", 300, 2), e("Cid", 300, 1), e("Abe", null, null)]);
+    expect(sorted.map((x) => x.name)).toEqual(["Cid", "Ann", "Bob", "Abe", "Zed"]);
+  });
+
+  it("corazones llenos, vacíos y bloqueados por romance", () => {
+    const h = e("Haley", 2100, 1, true);
+    expect([0, 7, 8, 9].map((i) => [heartSprite(h, i).sx, heartSprite(h, i).dark])).toEqual([[211, false], [211, false], [211, true], [211, true]]);
+    expect(heartSprite(e("Pierre", 520, 1), 2).sx).toBe(218);
+  });
+});

@@ -161,6 +161,7 @@ async function boot() {
   const rainyDialogue = (await load("Characters/Dialogue/rainy").catch(() => ({}))) as Record<string, string>;
   const toolStrings = (await load("Strings/Tools").catch(() => ({}))) as Record<string, string>;
   const weaponStrings = (await load("Strings/Weapons").catch(() => ({}))) as Record<string, string>;
+  const npcNameStrings = (await load("Strings/NPCNames").catch(() => ({}))) as Record<string, string>;
   const uiStrings = (await load("Strings/UI").catch(() => ({}))) as Record<string, string>;
   const giftTastes = (await load("Data/NPCGiftTastes").catch(() => ({}))) as Record<string, string>;
   const mapToLocation = new Map<string, string>();
@@ -207,7 +208,7 @@ async function boot() {
     giftTastes,
     characters: Object.fromEntries(npcNames.map((n) => [n, characters[n]])),
     shops,
-    strings: { "Strings\\Objects": objectStrings, "Strings\\StringsFromCSFiles": csStrings, "Strings\\Locations": locationStrings, "Strings\\UI": uiStrings, "Strings\\Tools": toolStrings, "Strings\\Weapons": weaponStrings },
+    strings: { "Strings\\Objects": objectStrings, "Strings\\StringsFromCSFiles": csStrings, "Strings\\Locations": locationStrings, "Strings\\UI": uiStrings, "Strings\\Tools": toolStrings, "Strings\\Weapons": weaponStrings, "Strings\\NPCNames": npcNameStrings },
     items: {
       tools,
       weapons,

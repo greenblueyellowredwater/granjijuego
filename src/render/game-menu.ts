@@ -5,6 +5,7 @@ import { drawHorizontalPartition, drawInventoryGrid, drawMenuBox, drawShadowText
 import { drawItemInMenu } from "./toolbar.ts";
 import type { Item, ItemData } from "../world/items.ts";
 import { drawTooltip, type TooltipContent } from "./tooltip.ts";
+import { SocialPage, socialLayout, type SocialEntry } from "./social-page.ts";
 
 const CURSORS = "LooseSprites/Cursors";
 const CURSORS_16 = "LooseSprites/Cursors_1_6";
@@ -102,10 +103,21 @@ export class GameMenu {
     return inventorySlotAt(px, py, l.inventory.x, l.inventory.y, true);
   }
 
+  tab: "inventory" | "social" = "inventory";
+  readonly social = new SocialPage();
+
   hit(uiWidth: number, uiHeight: number, px: number, py: number) {
     const l = gameMenuLayout(uiWidth, uiHeight);
     const inside = (x: number, y: number, w: number, h: number) => px >= x && px < x + w && py >= y && py < y + h;
     if (inside(l.close.x, l.close.y, 48, 48)) return { kind: "close" as const };
+    const tab = l.tabs.find((t) => inside(t.x, t.y, 64, 64));
+    if (tab) return { kind: "tab" as const, name: tab.name };
+    if (this.tab === "social") {
+      const s = socialLayout(l.x, l.y, l.width + 36, l.height);
+      if (inside(s.up.x, s.up.y, 44, 48)) return { kind: "up" as const };
+      if (inside(s.down.x, s.down.y, 44, 48)) return { kind: "down" as const };
+      return null;
+    }
     if (inside(l.trash.x, l.trash.y, 64, 104)) return { kind: "trash" as const };
     const slot = inventorySlotAt(px, py, l.inventory.x, l.inventory.y, true);
     if (slot >= 0) return { kind: "slot" as const, slot };
@@ -113,17 +125,24 @@ export class GameMenu {
     return null;
   }
 
-  draw(uiWidth: number, uiHeight: number, items: (Item | null)[], data: ItemData, current: number, maxItems: number, info: InventoryPageInfo, mouse: { x: number; y: number }, tooltip: TooltipContent | null = null, energyStrings = { energy: "{0} Energy", health: "{0} Health" }) {
+  draw(uiWidth: number, uiHeight: number, items: (Item | null)[], data: ItemData, current: number, maxItems: number, info: InventoryPageInfo, mouse: { x: number; y: number }, tooltip: TooltipContent | null = null, energyStrings = { energy: "{0} Energy", health: "{0} Health" }, social: { entries: SocialEntry[]; strings: Record<string, string> } = { entries: [], strings: {} }) {
     const b = this.back, f = this.front;
     b.begin();
     f.begin();
     if (this.open) {
       const l = gameMenuLayout(uiWidth, uiHeight);
       b.stretch("__WHITE", [0, 0, 1, 1], 0, 0, uiWidth, uiHeight, 0x000000, 0.4);
-      drawMenuBox(b, l.x, l.y, l.width, l.height);
+      drawMenuBox(b, l.x, l.y, this.tab === "social" ? l.width + 36 : l.width, l.height);
       for (const t of l.tabs) {
         const icon = TAB_ICON[t.name];
-        b.draw({ texture: icon.texture, sx: icon.sx, sy: icon.sy, sw: 16, sh: 16, x: t.x, y: t.y + (t.name === "inventory" ? 8 : 0), scaleX: 4 });
+        b.draw({ texture: icon.texture, sx: icon.sx, sy: icon.sy, sw: 16, sh: 16, x: t.x, y: t.y + (t.name === this.tab ? 8 : 0), scaleX: 4 });
+      }
+      if (this.tab === "social") {
+        if (this.font && this.small) this.social.draw(b, f, { dialogue: this.font, dialogueTexture: DIALOGUE_FONT, small: this.small, smallTexture: SMALL_FONT }, social.entries, l.x, l.y, l.width + 36, l.height, social.strings);
+        f.draw({ texture: CURSORS, sx: 337, sy: 494, sw: 12, sh: 12, x: l.close.x, y: l.close.y, scaleX: 4 });
+        b.end();
+        f.end();
+        return;
       }
       drawHorizontalPartition(b, l.x, l.width, l.partitionY);
       drawInventoryGrid(b, l.inventory.x, l.inventory.y, items, data, { playerInventory: true, showGrayedOutSlots: false, maxItems, currentToolIndex: current, tinyFont: this.tiny });
