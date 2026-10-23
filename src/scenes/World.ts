@@ -24,6 +24,7 @@ import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, 
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
 import { dayTileGlows, LightContext, locationLights, torchLight, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
 import { LightingOverlay } from "../render/lighting.ts";
+import { EventRunner, findEvent, orderedEntries, parseCommands, type EventActor, type EventEnd, type EventHost, type PreconditionContext } from "../world/events.ts";
 import { ElevatorMenu } from "../render/elevator-menu.ts";
 import { numberSpriteQuads } from "../render/skills-page.ts";
 import { createBat, createBug, createDuggy, createFly, createGrub, createRockCrab, createStoneGolem, hitWithPickaxe, createGreenSlime, damageMonsters, FARMER_INVINCIBLE_MS, farmerTakeDamage, healthBarLayout, monsterBox, parseMonsterData, standingPixel, SWORD_FRAMES, swordArea, swordFrameTimes, swordPose, updateMonster, type Monster } from "../world/monsters.ts";
@@ -106,7 +107,6 @@ import {
 const PIXEL_SCALE = TILE / 16;
 const SHADOW_TEXTURE = "LooseSprites/shadow";
 const CURSORS_TEXTURE = "LooseSprites/Cursors";
-const MARLON_SWORD_EVENT = "event:100162";
 const FARMER_TABLES = "generated/farmer";
 const MAX_TICKS_PER_FRAME = 8;
 const TICK_REAL_MS = 1000 / TICKS_PER_SECOND;
@@ -265,6 +265,10 @@ export class World extends Phaser.Scene {
   private floaters: { n: number; x: number; y: number; color: number; scale: number; age: number; vy: number }[] = [];
   private floaterPool: Phaser.GameObjects.Image[] = [];
   private knockedOut = false;
+  private event: EventRunner | null = null;
+  private eventStart: { x: number; y: number; facing: Facing } | null = null;
+  private eventImages = new Map<EventActor, { sprite: Phaser.GameObjects.Image; shadow: Phaser.GameObjects.Image; emote: Phaser.GameObjects.Image }>();
+  private eventFade: Phaser.GameObjects.Image | null = null;
 
   constructor() {
     super("World");
@@ -313,6 +317,10 @@ export class World extends Phaser.Scene {
     this.floaters = [];
     this.floaterPool = [];
     this.knockedOut = false;
+    this.event = null;
+    this.eventStart = null;
+    this.eventImages = new Map();
+    this.eventFade = null;
   }
 
   private get outdoors() {
@@ -335,6 +343,8 @@ export class World extends Phaser.Scene {
 
   preload() {
     if (!this.params.manifest.maps.includes(this.mapPath)) return;
+    const eventsKey = `Data/Events/${this.params.start.location}`;
+    if (this.params.manifest.data.includes(eventsKey) && !this.cache.text.exists(`events:${this.params.start.location}`)) this.load.text(`events:${this.params.start.location}`, contentUrl(eventsKey, "json"));
     queueTilemap(this, this.mapPath, this.params.manifest, this.params.season, this.tilesetOverrides());
     for (const key of Object.values(farmerTextureKeys(this.appearance))) {
       if (!this.textures.exists(key)) this.load.image(key, contentUrl(key, "png"));
@@ -740,11 +750,6 @@ export class World extends Phaser.Scene {
 
   private spawnTerrain() {
     const { state, store } = this.params;
-    if (this.location.name === "Mine" && !state.flags.includes(MARLON_SWORD_EVENT)) {
-      state.flags.push(MARLON_SWORD_EVENT);
-      addItem(state.inventory, { id: "(W)0", stack: 1 });
-      store.save(state);
-    }
     const level = mineLevelOf(this.location.name);
     if (level !== null) {
       this.spawnMine(level);
@@ -810,7 +815,7 @@ export class World extends Phaser.Scene {
   }
 
   private drawNpcs() {
-    const here = new Set(this.params.npcs.in(this.location.name));
+    const here = new Set(this.event ? [] : this.params.npcs.in(this.location.name));
     for (const [name, imgs] of this.npcImages) {
       if ([...here].some((n) => n.name === name)) continue;
       imgs.sprite.setVisible(false);
@@ -1542,6 +1547,13 @@ export class World extends Phaser.Scene {
     kb.on("keydown-SPACE", () => this.question?.confirm());
     kb.on("keydown-ESC", () => {
       if (this.elevator?.open) this.elevator.open = false;
+      else if (this.event?.skippable && !this.question?.open) {
+        if (this.dialogueBox) {
+          this.dialogueBox.onClose = null;
+          this.dialogueBox.pages = [];
+        }
+        this.event.skip((id) => this.params.state.inventory.some((i) => i?.id === id));
+      }
       else if (this.shop?.open) this.shop.close();
       else if (this.chestMenu?.open) this.closeChest();
       else if (this.question?.open) this.question.cancel();
@@ -1597,6 +1609,226 @@ export class World extends Phaser.Scene {
       else if (p.leftButtonDown()) this.useToolButton({ x: p.worldX, y: p.worldY });
     });
     cam.fadeIn(150, 0, 0, 0);
+    this.tryStartEvent();
+  }
+
+  private preconditionContext(): PreconditionContext {
+    const state = this.params.state;
+    const flags = weatherFlags(state.weather);
+    const c = centerTile(this.body);
+    return {
+      seen: new Set(state.eventsSeen ?? []),
+      mail: new Set(state.mailReceived ?? []),
+      time: this.params.clock.time,
+      dayOfWeek: state.dayOfMonth % 7,
+      dayOfMonth: state.dayOfMonth,
+      season: state.season,
+      year: state.year,
+      daysPlayed: state.daysPlayed,
+      raining: flags.raining && this.outdoors ? true : flags.raining,
+      weather: state.weather,
+      friendship: (npc) => state.friendship[npc]?.points ?? null,
+      dating: () => false,
+      spouse: null,
+      npcHere: (npc) => this.params.npcs.in(this.location.name).some((n) => n.name === npc),
+      npcVisible: (npc) => !!this.params.characters[npc],
+      totalEarned: state.totalEarned,
+      money: state.money,
+      tile: c,
+      hasItem: (id) => state.inventory.some((i) => i && (i.id === id || i.id === `(O)${id}`)),
+      activeDialogueEvents: new Set(),
+      skillLevel: () => 0,
+      random: Math.random,
+    };
+  }
+
+  private tryStartEvent() {
+    if (this.mine || this.event) return;
+    const raw = this.cache.text.get(`events:${this.location.name}`) as string | undefined;
+    if (!raw) return;
+    const entries = orderedEntries(raw);
+    const events = Object.fromEntries(entries);
+    const found = findEvent(entries, this.preconditionContext());
+    if (!found) return;
+    const header = parseCommands(found.script)[2] ?? "";
+    const names = header.split(/\s+/).filter((_, i) => i % 4 === 0);
+    const needed = names.flatMap((n) => [`Characters/${n}`, `Portraits/${n}`]).filter((t) => t in this.params.manifest.textures && !this.textures.exists(t));
+    const start = () => this.startEvent(found.id, found.script, events);
+    if (!needed.length) {
+      start();
+      return;
+    }
+    for (const t of needed) this.load.image(t, contentUrl(t, "png"));
+    this.load.once(Phaser.Loader.Events.COMPLETE, start);
+    this.load.start();
+  }
+
+  private startEvent(id: string, script: string, events: Record<string, string>) {
+    const state = this.params.state;
+    const host: EventHost = {
+      speak: (actor, text, done) => {
+        const pages = parseDialogue(text, state.farmerName, this.appearance.isMale);
+        if (!pages.length || !this.dialogueBox) {
+          done();
+          return;
+        }
+        this.dialogueBox.show(actor, pages);
+        this.dialogueBox.onClose = done;
+      },
+      message: (text, done) => {
+        if (!this.dialogueBox) {
+          done();
+          return;
+        }
+        this.dialogueBox.showMessage(text);
+        this.dialogueBox.onClose = done;
+      },
+      question: (text, answers, done) => {
+        if (!this.question) {
+          done(0);
+          return;
+        }
+        void this.question.ask(text, answers).then(done);
+      },
+      loadScript: (key) => events[key] ?? null,
+      hasMail: (mail) => (state.mailReceived ?? []).includes(mail),
+      addMail: (mail) => {
+        state.mailReceived ??= [];
+        if (!state.mailReceived.includes(mail)) state.mailReceived.push(mail);
+      },
+      giveItem: (item, count) => {
+        const full = item.startsWith("(") ? item : `(O)${item}`;
+        if (addItem(state.inventory, { id: full, stack: count })) this.dropItems([full], centerTile(this.body).x, centerTile(this.body).y);
+      },
+      removeItem: (item, count) => {
+        const full = item.startsWith("(") ? item : `(O)${item}`;
+        let left = count;
+        for (let i = 0; i < state.inventory.length && left > 0; i++) {
+          const it = state.inventory[i];
+          if (!it || it.id !== full) continue;
+          const take = Math.min(left, it.stack);
+          it.stack -= take;
+          left -= take;
+          if (it.stack <= 0) state.inventory[i] = null;
+        }
+      },
+      addQuest: (q) => {
+        state.quests ??= [];
+        if (!state.quests.includes(q)) state.quests.push(q);
+      },
+      removeQuest: (q) => {
+        state.quests = (state.quests ?? []).filter((x) => x !== q);
+      },
+      friendship: (npc, amount) => {
+        const f = (state.friendship[npc] ??= { points: 0, talkedToday: false });
+        f.points = Math.max(0, f.points + amount);
+      },
+      addRecipe: (kind, name) => {
+        const list = kind === "crafting" ? state.craftingRecipes : state.cookingRecipes;
+        if (!list.includes(name)) list.push(name);
+      },
+      addConversationTopic: () => {},
+      money: (amount) => earn(state, amount),
+      fade: (_toBlack, _speed, done) => done(),
+      actorExists: (name) => `Characters/${name}` in this.params.manifest.textures,
+      viewportSize: () => ({ w: this.cameras.main.width, h: this.cameras.main.height }),
+      mapSize: () => ({ w: this.rendered.widthInPixels, h: this.rendered.heightInPixels }),
+      outdoors: () => this.outdoors,
+      log: (text) => console.warn(text),
+    };
+    this.eventStart = { x: this.body.x, y: this.body.y, facing: this.body.facing };
+    this.event = new EventRunner(id, script, host, { x: this.body.x, y: this.body.y, facing: this.body.facing });
+    this.syncEventFarmer();
+  }
+
+  private syncEventFarmer() {
+    const e = this.event;
+    if (!e) return;
+    this.body.x = e.farmer.x;
+    this.body.y = e.farmer.y;
+    this.body.facing = e.farmer.facing as Facing;
+  }
+
+  private tickEvent() {
+    const e = this.event;
+    if (!e) return;
+    e.update(TICK_MS);
+    this.syncEventFarmer();
+    const f = e.farmer;
+    this.animator.tick(this.body.facing, f.moving, false, f.moving ? 1 : 0, TICK_MS);
+    if (e.finished) this.endEvent(e);
+  }
+
+  private endEvent(e: EventRunner) {
+    const state = this.params.state;
+    state.eventsSeen ??= [];
+    if (!state.eventsSeen.includes(e.id)) state.eventsSeen.push(e.id);
+    this.params.store.save(state);
+    const end: EventEnd = e.end ?? { kind: "default" };
+    const before = this.eventStart ?? { x: this.body.x, y: this.body.y, facing: this.body.facing };
+    this.event = null;
+    for (const imgs of this.eventImages.values()) {
+      imgs.sprite.destroy();
+      imgs.shadow.destroy();
+      imgs.emote.destroy();
+    }
+    this.eventImages.clear();
+    this.eventFade?.setVisible(false);
+    if (end.kind === "newDay") {
+      this.endDay();
+      return;
+    }
+    if (end.kind === "warpOut" || end.kind === "invisibleWarpOut" || end.kind === "dialogueWarpOut") {
+      const w = this.location.warps[0];
+      if (w) {
+        this.warpTo(w.target, w.toX, w.toY);
+        return;
+      }
+    }
+    if (end.kind === "position" && end.position) {
+      this.warpTo(this.location.name, end.position.x, end.position.y);
+      return;
+    }
+    const tile = { x: Math.floor((before.x + 32) / 64), y: Math.floor((before.y + 16) / 64) };
+    this.warpTo(this.location.name, tile.x, tile.y, before.facing);
+  }
+
+  private drawEvent() {
+    const e = this.event;
+    if (!e) return;
+    for (const a of e.actors) {
+      const texture = `Characters/${a.name}`;
+      if (!this.textures.exists(texture)) continue;
+      const frame = e.npcFrame(a);
+      const tex = this.textures.get(texture);
+      const fname = `npc:${frame}`;
+      if (!tex.has(fname)) tex.add(fname, 0, (frame % 4) * 16, Math.floor(frame / 4) * 32, 16, 32);
+      let imgs = this.eventImages.get(a);
+      if (!imgs) {
+        imgs = {
+          sprite: this.add.image(0, 0, texture, fname).setOrigin(0.5, 0.75).setScale(PIXEL_SCALE),
+          shadow: this.add.image(0, 0, SHADOW_TEXTURE).setScale(PIXEL_SCALE),
+          emote: this.add.image(0, 0, SHADOW_TEXTURE).setOrigin(0, 0).setScale(PIXEL_SCALE).setVisible(false),
+        };
+        this.eventImages.set(a, imgs);
+      }
+      const shake = a.shake > 0 ? Phaser.Math.Between(-1, 1) : 0;
+      const depth = this.rendered.spriteDepth((a.y + 32) / 10000);
+      imgs.sprite.setTexture(texture, fname).setFlipX(a.flip).setPosition(a.x + 32 + shake, a.y + 16 + a.jumpOffset).setDepth(depth).setVisible(!a.invisible);
+      imgs.shadow.setPosition(a.x + 32, a.y + 44).setDepth(depth - 1e-6).setVisible(!a.invisible);
+      if (a.emote && this.textures.exists(EMOTE_TEXTURE)) {
+        const r = emoteSourceRect(a.emote.frame, this.textures.get(EMOTE_TEXTURE).source[0].width);
+        const ename = `emote:${a.emote.frame}`;
+        const etex = this.textures.get(EMOTE_TEXTURE);
+        if (!etex.has(ename)) etex.add(ename, 0, r.sx, r.sy, r.sw, r.sh);
+        const data = this.params.characters[a.name];
+        const p = npcEmotePosition(a.x, a.y + a.jumpOffset, (data as { EmoteOffset?: { x: number; y: number } } | undefined)?.EmoteOffset, 16, 32, Number((data as { Gender?: unknown })?.Gender) === 1, Number((data as { Age?: unknown })?.Age) === 2);
+        imgs.emote.setTexture(EMOTE_TEXTURE, ename).setPosition(p.x, p.y).setDepth(DEPTH.alwaysFront + 1 + (a.y + 32) / 1e7).setVisible(true);
+      } else imgs.emote.setVisible(false);
+    }
+    const fade = e.globalFade;
+    this.eventFade ??= this.add.image(0, 0, "__WHITE").setOrigin(0, 0).setScrollFactor(0).setTint(0x000000).setDepth(HUD_DEPTH - 10);
+    this.eventFade.setDisplaySize(this.cameras.main.width, this.cameras.main.height).setAlpha(fade?.alpha ?? 0).setVisible(!!fade && fade.alpha > 0);
   }
 
   private spawnTile(start: WorldStart) {
@@ -2426,6 +2658,7 @@ export class World extends Phaser.Scene {
       this.dialogueBox.advance();
       return;
     }
+    if (this.event) return;
     if (this.question?.open) {
       this.question.confirm();
       return;
@@ -2467,7 +2700,7 @@ export class World extends Phaser.Scene {
   }
 
   private get timePasses() {
-    return !this.fishing?.bar && !this.elevator?.open && !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.endingDay && !this.warping;
+    return !this.event && !this.fishing?.bar && !this.elevator?.open && !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.endingDay && !this.warping;
   }
 
   private get canMove() {
@@ -2616,6 +2849,12 @@ export class World extends Phaser.Scene {
     this.tickFishing();
     const pressed = this.pressed();
     if (!this.canMove) pressed.clear();
+    if (this.event) {
+      this.tickEvent();
+      this.updateTreeFade();
+      this.ticks++;
+      return;
+    }
     this.tickTool();
     this.tickMonsters();
     this.updateNpcs();
@@ -2644,7 +2883,7 @@ export class World extends Phaser.Scene {
     this.weatherFx?.draw(flags, this.outdoors, this.cameras.main, time);
     this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: flags.raining }));
     this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
-    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.dialogueBox?.open && !this.question?.open && !this.fishing?.bar && !this.elevator?.open);
+    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.dialogueBox?.open && !this.question?.open && !this.fishing?.bar && !this.elevator?.open && !this.event);
     this.dialogueBox?.update(this.game.loop.rawDelta);
     this.shipping?.update(Math.min(250, this.game.loop.rawDelta));
     const pointer = this.input.activePointer;
@@ -2656,7 +2895,8 @@ export class World extends Phaser.Scene {
     this.elevator?.draw(state.deepestMineLevel ?? 0, this.mine?.level ?? 0, this.cameras.main.width, this.cameras.main.height, { x: pointer.x, y: pointer.y });
     this.levelUp?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items, this.params.strings["Strings\\UI"] ?? {}, { x: pointer.x, y: pointer.y });
     this.dialogueBox?.draw(this.cameras.main.width, this.cameras.main.height, speaker && this.textures.exists(speaker) ? speaker : null);
-    this.hud?.draw(
+    if (this.event) this.hud?.hide();
+    else this.hud?.draw(
       {
         time: clock.time,
         interval: clock.interval,
@@ -2704,6 +2944,11 @@ export class World extends Phaser.Scene {
 
   private updateCamera() {
     const cam = this.cameras.main;
+    if (this.event && !this.event.follow && this.event.viewport) {
+      cam.scrollX = this.event.viewport.x;
+      cam.scrollY = this.event.viewport.y;
+      return;
+    }
     const box = farmerBox(this.body.x, this.body.y);
     cam.scrollX = viewportScroll(box.x + box.w / 2, cam.width, this.rendered.widthInPixels);
     cam.scrollY = viewportScroll(box.y + box.h / 2, cam.height, this.rendered.heightInPixels);
@@ -2730,6 +2975,7 @@ export class World extends Phaser.Scene {
     this.redrawDirt();
     this.drawDrops();
     this.drawNpcs();
+    this.drawEvent();
     this.drawMonsters(time);
     this.drawFloaters(delta);
     this.drawTemps(delta);

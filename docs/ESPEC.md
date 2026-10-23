@@ -1543,12 +1543,94 @@ Aproximaciones:
 - Piezas `Cursors (268,408/424/448,12,16)`. Relleno `168+(máx−100)` con color rojo→verde y los 4 px superiores más oscuros.
 - Con vida < 20 pulsa en rosa.
 
-**Espada inicial**: la primera vez que se entra a `Mine` se recibe la Espada oxidada `(W)0` y se marca el evento 100162. El evento de Marlon todavía no se reproduce.
+**Espada inicial**: la entrega el evento 100162 de Marlon en `Mine` (S26), con `awardFestivalPrize sword`, o al saltarlo.
 
 **Aproximaciones**:
 - Faltan dagas, mazos, especiales, anillos, defensa, buffs, botín extra (`getExtraDropItems`) y apareamiento de slimes.
 - Sin deslizamiento en esquinas para monstruos, brillo exacto (se usa un pulso rojo), sacudida de pantalla, sonidos, ni pérdida de ítems al desmayarse.
 - No hay mensaje al desmayarse.
+
+## Spec S26: eventos (`Event`, `Preconditions`, `GameLocation.checkForEvents`)
+
+**Elección**:
+- Al entrar a una ubicación se recorre `Data/Events/<ubicación>` en el orden del archivo. El orden se preserva leyendo el JSON como texto, porque `JSON.parse` reordena las claves numéricas.
+- Las claves son `id/condición/condición...`. Se salta la clave si el id es `-1`, si ya se vio el evento, o si alguna condición falla. Las claves sin id numérico son guiones para `fork`/`switchEvent`.
+- Las condiciones admiten `!` para negar. Los alias salen del atributo `OtherNames` de `Preconditions`:
+  - `e`/`k`: visto / no visto.
+  - `f`: amistad (pares npc puntos).
+  - `t`: hora entre dos valores.
+  - `w`: `rainy`, `sunny` o nombre de clima.
+  - `d`: no es ese día de la semana.
+  - `z`: no es esa estación.
+  - `y`: año (1 exacto; si no, ≥).
+  - `j`: días jugados >.
+  - `n`/`l`/`Hn`/`Hl`/`*n`/`*l`: correo recibido o no.
+  - `p`: NPC visible en la ubicación.
+  - `o`/`O`: no es / es cónyuge.
+  - `m`/`M`: dinero ganado / dinero actual.
+  - `a`: tile del granjero.
+  - `i`: tiene ítem.
+  - `u`: día del mes.
+  - `A`: no hay evento de diálogo activo.
+  - `H`: siempre cierto en un jugador.
+
+**Guion** (`ParseCommands`):
+- Se separa por `/` respetando comillas.
+- Campos 0–2: música, cámara (`x y` o `follow`) y actores en grupos de 4 (nombre x y dirección).
+  - `farmer x y d` ubica al granjero en `(x·64, y·64+16)`; con x = −1 lo deja donde está.
+  - Los NPC se crean con su sprite 16×32 en `(x·64, y·64)`.
+- La cámara centra el tile `(x·64+32 − ancho/2, y·64+32 − alto/2)`. En exteriores se limita al mapa; si la vista es más grande que el mapa, se centra el mapa.
+- Los comandos empiezan en el índice 3. Los que empiezan con `--` se saltan.
+
+**Bucle** (por tick):
+- Se actualizan los actores: salto con gravedad 0,5, emote, animación y texto sobre la cabeza.
+- Movimientos pendientes:
+  - Cada actor avanza `speed` px (2; el granjero, 2 + extra) en su dirección.
+  - Termina cuando su caja (NPC `(X+8, Y+16, 48, 32)`, granjero `(X+8, Y, 48, 32)`) queda dentro del tile destino reducido 4 px a los lados, con el borde superior a ≤ 16 px del tile.
+  - Entonces mira hacia la dirección pedida.
+  - El comando avanza cuando no quedan movimientos, salvo con `move … true`.
+- `pause n` descuenta el tiempo y luego avanza. Los actores siguen moviéndose.
+
+**Comandos implementados**:
+- Cuerpo y movimiento:
+  - `move` (grupos de 4 más un `true`/`false` opcional).
+  - `faceDirection` (pausa de 500 ms salvo `true`).
+  - `warp` (NPC en `x·64+4`).
+  - `speed`, `positionOffset`, `jump` (velocidad 8 por defecto).
+  - `showFrame` (con un solo argumento es el granjero).
+  - `animate actor flip loop ms cuadros…`, `stopAnimation`, `halt`.
+  - `emote` (espera a que termine salvo `true`), `shake`, `textAboveHead` (3000 ms).
+- Diálogo:
+  - `speak`: espera 500 ms y abre el diálogo con retrato. El comando avanza al cerrarlo.
+  - `message`.
+  - `question forkN "pregunta#resp…"`: elegir la respuesta N alterna la variable especial.
+  - `quickQuestion pregunta#resp…(break)rama…`: la rama elegida, separada por `\`, se inserta tras el comando.
+  - `fork [correo] clave`: cambia al guion `clave` si se recibió el correo o si la variable especial está activa.
+  - `switchEvent`.
+- Cámara y pantalla: `viewport x y [clamp] [true] [unfreeze]` o `viewport actor`, `viewport move dx dy ms`, `globalFade`/`globalFadeToClear` (velocidad 0,007), `fade`, `ambientLight`.
+- Recompensas y estado: `addQuest`/`removeQuest`, `mail`/`addMailReceived`, `friendship`, `money`, `addItem`/`removeItem`, `addCraftingRecipe`/`addCookingRecipe`, `awardFestivalPrize` (`sword` → `(W)0`).
+- Control: `skippable`/`unskippable`, `makeInvisible`, `end`.
+
+**Fin** (`endBehaviors` → `exitEvent`):
+- El evento se marca como visto.
+- `end` vuelve el granjero a su tile anterior al evento.
+- `end warpOut` usa el primer warp de la ubicación. `end newDay` termina el día. `end position x y` lo deja en ese tile.
+- Saltar (Esc, si es `skippable`) aplica las recompensas fijas de `skipEvent`, por ejemplo:
+  - 100162 → `(W)0`.
+  - 992553 → receta Furnace y misión 11.
+  - 739330 → BambooPole y fin en (43,36).
+  - El resto de la tabla está en el código.
+- Durante el evento:
+  - No pasa el tiempo y el jugador no controla al granjero.
+  - Se ocultan el HUD, la barra y los NPC normales de la ubicación.
+  - La cámara la maneja el evento, salvo `follow`.
+
+**Aproximaciones**:
+- Sin música ni sonidos.
+- Faltan sprites temporales (`specificTemporarySprite`, `temporarySprite`), `advancedMove`, `addTemporaryActor`, mapas temporales, `doAction`, `eyes` y `farmerEat`.
+- `itemAboveHead` no muestra el ítem. El texto sobre la cabeza no se dibuja.
+- Faltan festivales, `playerControl` y el desmayo como evento.
+- Saltar un evento no anima un fundido.
 
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 

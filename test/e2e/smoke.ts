@@ -36,6 +36,16 @@ async function holdUntil(page: Page, key: KeyInput, re: RegExp, timeout = 15000)
 
 const settle = () => new Promise((r) => setTimeout(r, 400));
 
+async function skipEvent(page: Page) {
+  const ev = () => page.evaluate(`(() => { const w = window.__game?.scene.getScene("World"); if (!w || !w.body) return "warping"; return w.event ? (w.event.skippable ? "skip" : "wait") : (w.warping ? "warping" : "none"); })()`);
+  for (let i = 0; i < 100; i++) {
+    const s = await ev();
+    if (s === "none") return;
+    if (s === "skip") await page.keyboard.press("Escape");
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
 const checks: [string, (page: Page) => Promise<void>][] = [
   [
     "entra a la tienda de Pierre por la puerta y sale por el felpudo",
@@ -381,6 +391,7 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     async (page) => {
       const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
       await page.goto(`${BASE}/?map=Mine&x=23&y=10`);
+      await skipEvent(page);
       await waitStatus(page, /Mine .* tile 23,10/);
       await holdUntil(page, "w", /Enfrente: Mine/);
       await page.keyboard.press("x");
@@ -407,10 +418,11 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     },
   ],
   [
-    "recibe la espada oxidada, mata un slime y un slime le hace daño",
+    "Marlon da la espada oxidada al saltar el evento, mata un slime y un slime le hace daño",
     async (page) => {
       const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
       await page.goto(`${BASE}/?map=Mine&x=23&y=10`);
+      await skipEvent(page);
       await waitStatus(page, /Mine .* tile 23,10/);
       const slot = (await world(`w.params.state.inventory.findIndex((i) => i && i.id === "(W)0")`)) as number;
       if (slot < 0) throw new Error("No recibió la espada oxidada");
@@ -441,6 +453,7 @@ const checks: [string, (page: Page) => Promise<void>][] = [
     async (page) => {
       const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
       await page.goto(`${BASE}/?map=Mine&x=17&y=4`);
+      await skipEvent(page);
       await waitStatus(page, /Mine .* tile 17,4/);
       await world(`(w.params.state.deepestMineLevel = 45, true)`);
       await holdUntil(page, "w", /Enfrente: MineElevator/);
@@ -455,6 +468,32 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       if (!ok) throw new Error("No apareció junto al ascensor");
     },
   ],
+  [
+    "al entrar a la mina por primera vez Marlon camina, habla y entrega la espada",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=Mine&x=23&y=10`);
+      await page.evaluate(`localStorage.clear()`);
+      await page.goto(`${BASE}/?map=Mine&x=23&y=10`);
+      const end = Date.now() + 60000;
+      let spoke = false;
+      while (Date.now() < end) {
+        const st = (await world(`JSON.stringify({ ev: !!w.event, dlg: !!(w.dialogueBox && w.dialogueBox.open), sp: w.dialogueBox ? w.dialogueBox.speaker : "" })`).catch(() => "{}")) as string;
+        const s = JSON.parse(st);
+        if (s.dlg && s.sp === "Marlon") {
+          if (!spoke) await page.screenshot({ path: `${OUT}/marlon.png` });
+          spoke = true;
+          await page.keyboard.press("x");
+        }
+        if (spoke && s.ev === false) break;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      if (!spoke) throw new Error("Marlon no habló");
+      const inv = (await world(`JSON.stringify(w.params.state.inventory)`)) as string;
+      if (!inv.includes('"(W)0"')) throw new Error(`Sin espada: ${inv}`);
+      if (!((await world(`w.params.state.eventsSeen.includes("100162")`)) as boolean)) throw new Error("Evento no marcado");
+    },
+  ],
 ];
 
 if (!CHROME) throw new Error("No encontré Chrome; definí CHROME_PATH");
@@ -466,7 +505,7 @@ const browser = await puppeteer.launch({
   defaultViewport: { width: 1280, height: 800 },
 });
 let failed = 0;
-for (const [name, run] of checks) {
+for (const [name, run] of checks.filter(([n]) => !process.env.ONLY || n.includes(process.env.ONLY))) {
   const page = await browser.newPage();
   page.on("pageerror", (e) => console.error(`  [pageerror] ${e}`));
   try {

@@ -27,6 +27,7 @@ export class DialogueBox {
   private timer = 0;
   speaker = "";
   portraitless = false;
+  onClose: (() => void) | null = null;
 
   constructor(scene: Phaser.Scene, depth: number) {
     this.batch = new UiBatch(scene, depth);
@@ -58,7 +59,12 @@ export class DialogueBox {
     }
     this.page++;
     this.chars = 0;
-    if (this.page >= this.pages.length) this.pages = [];
+    if (this.page >= this.pages.length) {
+      this.pages = [];
+      const done = this.onClose;
+      this.onClose = null;
+      done?.();
+    }
   }
 
   update(ms: number) {

@@ -34,6 +34,9 @@ export interface GameState {
   toolUpgrade?: { id: string; daysLeft: number } | null;
   fishCaught?: Record<string, [number, number]>;
   deepestMineLevel?: number;
+  eventsSeen?: string[];
+  mailReceived?: string[];
+  quests?: string[];
   timesReachedMineBottom?: number;
   craftingRecipes: string[];
   cookingRecipes: string[];
