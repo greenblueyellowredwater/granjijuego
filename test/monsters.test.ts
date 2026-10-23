@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  createBat,
+  createGrub,
+  createRockCrab,
+  createStoneGolem,
+  hitWithPickaxe,
+  takeDamage,
   createBug,
   createGreenSlime,
   damageMonsters,
@@ -99,5 +105,42 @@ describe("monstruos: combate", () => {
     const l = healthBarLayout(50, 100, 1280, 720, 270);
     expect(l.top).toEqual({ x: 1168, y: 480 });
     expect(l.fill).toEqual({ x: 1180, y: 612, w: 24, h: 84 });
+  });
+});
+
+const CRAB = "30/5/0/0/false/0/717 .15 286 .4 96 .005 99 .001/1/0/1/2/.0/true/4/Rock Crab";
+const GRUB = "20/4/0/0/false/1000/684 .6 273 .05 273 .05 157 .02 114 .005 96 .005 99 .001/0/.005/3/1/.00/true/2/Grub";
+const GOLEM = "45/5/0/0/false/1000/390 .9 80 .1 382 .1 380 .1 96 .005 99 .001/5/.01/3/2/.00/true/5/Stone Golem";
+const BAT = "24/6/0/0/true/1000/767 .9 767 .4 108 .001 287 .02 96 .005 99 .001/1/.01/4/3/.00/true/3/Bat";
+
+describe("monstruos de las primeras minas", () => {
+  it("el caparazón del cangrejo bloquea golpes hasta romperlo con el pico", () => {
+    const crab = createRockCrab(parseMonsterData(CRAB), 0, 0, scripted([0.9]));
+    expect(crab.waiter).toBe(false);
+    expect(takeDamage(crab, 10, { x: 0, y: 0 }, 0, scripted([0.9]))).toBe(0);
+    for (let i = 0; i < 5; i++) expect(hitWithPickaxe(crab, { x: 0, y: 100, w: 48, h: 32 }, scripted([]))).toBe(true);
+    expect(crab.shellGone).toBe(true);
+    expect(takeDamage(crab, 10, { x: 0, y: 0 }, 0, scripted([0.9]))).toBe(9);
+  });
+
+  it("la larva herida se vuelve pupa y luego mosca", () => {
+    const grub = createGrub(parseMonsterData(GRUB), 0, 0, scripted([]));
+    grub.health = 5;
+    const spawned: string[] = [];
+    const w = { ...open, spawn: (m: { kind: string }) => spawned.push(m.kind), createFly: () => createBat(parseMonsterData(BAT), 0, 0, scripted([])) };
+    for (let i = 0; i < 400 && !grub.pupating; i++) updateMonster(grub, w, 16);
+    expect(grub.pupating).toBe(true);
+    for (let i = 0; i < 300 && grub.health > -500; i++) updateMonster(grub, w, 16);
+    expect(grub.health).toBe(-500);
+    expect(spawned).toEqual(["bat"]);
+  });
+
+  it("el gólem despierta cuando el granjero se acerca", () => {
+    const golem = createStoneGolem(parseMonsterData(GOLEM), 1000, 1000, 50, scripted([]));
+    expect([golem.health, golem.damage, golem.frame]).toEqual([78, 7, 16]);
+    updateMonster(golem, open, 16);
+    expect(golem.seenPlayer).toBe(true);
+    for (let i = 0; i < 60 && !golem.walkingToward; i++) updateMonster(golem, open, 16);
+    expect([golem.walkingToward, golem.threshold, golem.frame]).toEqual([true, 16, 0]);
   });
 });

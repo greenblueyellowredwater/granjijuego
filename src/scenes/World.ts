@@ -25,7 +25,7 @@ import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEAS
 import { dayTileGlows, LightContext, locationLights, torchLight, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
 import { LightingOverlay } from "../render/lighting.ts";
 import { numberSpriteQuads } from "../render/skills-page.ts";
-import { createBug, createGreenSlime, damageMonsters, FARMER_INVINCIBLE_MS, farmerTakeDamage, healthBarLayout, monsterBox, parseMonsterData, standingPixel, SWORD_FRAMES, swordArea, swordFrameTimes, swordPose, updateMonster, type Monster } from "../world/monsters.ts";
+import { createBat, createBug, createDuggy, createFly, createGrub, createRockCrab, createStoneGolem, hitWithPickaxe, createGreenSlime, damageMonsters, FARMER_INVINCIBLE_MS, farmerTakeDamage, healthBarLayout, monsterBox, parseMonsterData, standingPixel, SWORD_FRAMES, swordArea, swordFrameTimes, swordPose, updateMonster, type Monster } from "../world/monsters.ts";
 import { type MonsterSpawn, checkStoneForItems, LADDER_DOWN, LADDER_UP, MINE_SHEET, mineLadderLights, mineLevelOf, mineLighting, mineLocationName, mineMapImage, mineMapNumber, outdoorStoneDestroyed, populateLevel, type MineMap, type MinerContext } from "../world/mines.ts";
 import { DIALOGUE_FONT, Hud, HUD_DEPTH, type HudStrings } from "../render/hud.ts";
 import { QuestionBox } from "../render/question.ts";
@@ -376,7 +376,7 @@ export class World extends Phaser.Scene {
     }
     textures.add(SPRITE_TEXT_TEXTURE);
     textures.add(EMOTE_TEXTURE);
-    if (mineLevelOf(this.params.start.location) !== null) for (const m of ["Green Slime", "Bug"]) textures.add(`Characters/Monsters/${m}`);
+    if (mineLevelOf(this.params.start.location) !== null) for (const m of ["Green Slime", "Bug", "Rock Crab", "Duggy", "Grub", "Fly", "Bat", "Stone Golem"]) textures.add(`Characters/Monsters/${m}`);
     for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont", "LooseSprites/Cursors2", "TileSheets/BuffsIcons", "TileSheets/Craftables", "TileSheets/Objects_2", "Maps/springobjects", "TileSheets/tools", "TileSheets/weapons"]) textures.add(t);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
@@ -440,8 +440,18 @@ export class World extends Phaser.Scene {
     if (!raw) return null;
     const stats = parseMonsterData(raw);
     const r = new DotNetRandom(Math.floor(Math.random() * 2147483647));
-    const m =
-      spawn.name === "Green Slime" ? createGreenSlime(stats, spawn.x * TILE, spawn.y * TILE, level, r) : spawn.name === "Bug" ? createBug(stats, spawn.x * TILE, spawn.y * TILE, spawn.facing ?? 0, r) : null;
+    const x = spawn.x * TILE, y = spawn.y * TILE;
+    const factories: Record<string, () => Monster> = {
+      "Green Slime": () => createGreenSlime(stats, x, y, level, r),
+      Bug: () => createBug(stats, x, y, spawn.facing ?? 0, r),
+      "Rock Crab": () => createRockCrab(stats, x, y, r),
+      Duggy: () => createDuggy(stats, x, y, r),
+      Grub: () => createGrub(stats, x, y, r),
+      Fly: () => createFly(stats, x, y, r),
+      Bat: () => createBat(stats, x, y, r),
+      "Stone Golem": () => createStoneGolem(stats, x, y, level, r),
+    };
+    const m = factories[spawn.name]?.() ?? null;
     if (m && spawn.special) m.hasSpecialItem = true;
     return m;
   }
@@ -457,8 +467,47 @@ export class World extends Phaser.Scene {
       farmerPosition: { x: this.body.x, y: this.body.y },
       hitFarmer: (m: Monster) => this.hitFarmer(m),
       random,
+      diggable: (tx: number, ty: number) => {
+        const props = this.location.tileProps("Back", tx, ty);
+        return !!props && !("NPCBarrier" in props) && ("Diggable" in props || this.location.tileIndexOnSheet("Back", tx, ty, MINE_SHEET) === 0);
+      },
+      digHole: (tx: number, ty: number) => {
+        const gid = this.location.placeTile("Back", tx, ty, MINE_SHEET, 0);
+        if (gid !== null) this.rendered.setTile("Back", tx, ty, gid);
+      },
+      spawn: (m: Monster) => this.monsters.push(m),
+      createFly: (x: number, y: number) => {
+        const raw = this.params.monsters?.["Fly"];
+        return raw ? createFly(parseMonsterData(raw), x, y, random) : null;
+      },
     };
     for (const m of this.monsters) updateMonster(m, world, TICK_MS);
+    for (const m of this.monsters.filter((x) => x.health <= -500)) this.removeMonster(m);
+  }
+
+  private removeMonster(m: Monster) {
+    this.monsters = this.monsters.filter((x) => x !== m);
+    for (const img of this.monsterImages.get(m) ?? []) img.destroy();
+    this.monsterImages.delete(m);
+  }
+
+  private toolHitsMonsters(kind: ToolKind, x: number, y: number) {
+    if (kind !== "axe" && kind !== "pickaxe" && kind !== "hoe") return false;
+    const area = { x: x - 32, y: y - 32, w: 64, h: 64 };
+    const box = farmerBox(this.body.x, this.body.y);
+    const r = new DotNetRandom(Math.floor(Math.random() * 2147483647));
+    if (kind === "pickaxe") {
+      const crab = this.monsters.find((m) => m.kind === "crab" && monsterBox(m).x < area.x + area.w && area.x < monsterBox(m).x + monsterBox(m).w && monsterBox(m).y < area.y + area.h && area.y < monsterBox(m).y + monsterBox(m).h);
+      if (crab && hitWithPickaxe(crab, box, r)) return true;
+    }
+    const level = (this.tool?.upgradeLevel ?? 0) + 1;
+    const hits = damageMonsters(this.monsters, area, { minDamage: level, maxDamage: level * 3, knockback: 1, precision: 0, critChance: 0, critMultiplier: 1, type: -1 }, { box, facing: this.body.facing, luckLevel: 0, professions: this.params.state.professions ?? [] }, r, false);
+    for (const h of hits) {
+      const b = monsterBox(h.monster);
+      if (h.damage > 0) this.floaters.push({ n: h.damage, x: b.x + b.w / 2 + 16, y: b.y + b.h / 2, color: 0xff8200, scale: 1, age: 0, vy: -3 });
+      if (h.killed) this.monsterKilled(h.monster);
+    }
+    return hits.length > 0;
   }
 
   private hitFarmer(m: Monster) {
@@ -530,9 +579,7 @@ export class World extends Phaser.Scene {
     this.dropItems(m.drops.filter((id) => !id.startsWith("-")), tx, ty);
     gainExperience(state, COMBAT, m.experience);
     this.temps.push(animationSprite(44, m.x, m.y - 16, 10, false, 70));
-    this.monsters = this.monsters.filter((x) => x !== m);
-    for (const img of this.monsterImages.get(m) ?? []) img.destroy();
-    this.monsterImages.delete(m);
+    this.removeMonster(m);
   }
 
   private drawMonsters(time: number) {
@@ -563,6 +610,35 @@ export class World extends Phaser.Scene {
         const fx = 32 + (m.readyToJump > 0 || m.focused ? 16 : 0), fy = 120 + (m.readyToJump < 0 && (m.focused || m.invincible > 0) ? 24 : 0);
         face.setTexture(texture, frameOf(fx, fy, 16, 24)).setOrigin(0.5, 16 / 24).setScale(4).setPosition(m.x + 32 + m.face.x * 4, m.y + 16 + jump + m.yOffset + m.face.y * 4).setAlpha(m.facing === 0 ? 0.5 : 1).setDepth(this.rendered.spriteDepth(standY / 10000 + 0.0001)).setVisible(true);
         glow.setTexture(texture, bodyFrame).setOrigin(0.5, 16 / 24).setScale(4).setPosition(m.x + 32, m.y + 16 + m.yOffset).setTintFill(0xff0000).setAlpha(glowAlpha).setDepth(this.rendered.spriteDepth(standY / 10000 + 0.001)).setVisible(glowAlpha > 0);
+      } else if (m.kind !== "bug") {
+        face.setVisible(false);
+        if (m.invisible) {
+          shadow.setVisible(false);
+          body.setVisible(false);
+          glow.setVisible(false);
+          continue;
+        }
+        const f = m.frame;
+        const bodyFrame = frameOf((f % 4) * 16, Math.floor(f / 4) * 24, 16, 24);
+        const scale = 4 * Math.max(0.2, m.scale ?? 1);
+        const shakeX = (m.shake ?? 0) > 0 ? Phaser.Math.Between(-1, 1) : 0;
+        if (m.shake && m.shake > 0) m.shake -= this.game.loop.delta;
+        let px = m.x + 32 + shakeX, py = m.y + 16, oy = 18 / 24, depth = standY / 10000, sx = m.x + 32, sy = m.y + 32;
+        if (m.kind === "bat") {
+          py = m.y + 32;
+          oy = 16 / 24;
+          depth = 0.92;
+          sy = m.y + 64;
+        } else if (m.kind === "fly") {
+          py = m.y + 16 - 32;
+          oy = 16 / 24;
+          depth = (standY + 8) / 10000;
+          sy = m.y + 16;
+        }
+        body.setTexture(texture, bodyFrame).setOrigin(0.5, oy).setScale(scale).setPosition(px, py).setRotation(m.kind === "fly" || m.kind === "grub" ? m.rotation ?? 0 : 0).clearTint().setDepth(this.rendered.spriteDepth(depth)).setVisible(true);
+        const showShadow = !m.hideShadow || m.kind === "bat" || m.kind === "fly";
+        shadow.setOrigin(0.5, 0.5).setPosition(sx, sy).setScale(4).setDepth(this.rendered.spriteDepth((standY - 1) / 10000)).setVisible(showShadow);
+        glow.setTexture(texture, bodyFrame).setOrigin(0.5, oy).setScale(scale).setPosition(px, py).setRotation(body.rotation).setTintFill(0xff0000).setAlpha(glowAlpha).setDepth(this.rendered.spriteDepth(depth + 0.001)).setVisible(glowAlpha > 0);
       } else {
         const wob = Math.sin(((time % 1000) / 1000) * Math.PI * 2) * 10;
         const ox = m.facing % 2 === 0 ? wob : 0, oy = m.facing % 2 === 0 ? 0 : wob;
@@ -1150,6 +1226,7 @@ export class World extends Phaser.Scene {
     if (b !== "useTool" || !this.tool) return;
     const state = this.params.state;
     const tx = Math.floor(this.tool.target.x / TILE), ty = Math.floor(this.tool.target.y / TILE);
+    this.toolHitsMonsters(this.tool.kind, this.tool.target.x, this.tool.target.y);
     if (this.tool.kind === "scythe") {
       this.hitObjectAt(tx, ty, "scythe");
       this.hitTreeAt(tx, ty, "scythe");

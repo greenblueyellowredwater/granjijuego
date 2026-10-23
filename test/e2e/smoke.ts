@@ -417,7 +417,7 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       await waitStatus(page, /UndergroundMine2 /);
       await settle();
       await world(`(() => { w.monsters = []; const s = w.mine.start; w.body.facing = 2; const m = w.createMonster({ name: "Green Slime", x: s.x, y: s.y + 1 }, 2); m.walkingToward = false; m.jitter = 0; m.speed = 0; m.health = 3; w.monsters.push(m); return true; })()`);
-      await page.keyboard.press(String(slot + 1));
+      await page.keyboard.press(String(slot + 1) as KeyInput);
       for (let i = 0; i < 10 && ((await world(`w.monsters.length`)) as number) > 0; i++) {
         await page.keyboard.press("c");
         await new Promise((r) => setTimeout(r, 400));

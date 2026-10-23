@@ -36,7 +36,7 @@ export function parseMonsterData(raw: string): MonsterStats {
   };
 }
 
-export type MonsterKind = "slime" | "bug";
+export type MonsterKind = "slime" | "bug" | "crab" | "duggy" | "grub" | "fly" | "bat" | "golem";
 
 export interface Monster {
   kind: MonsterKind;
@@ -79,6 +79,22 @@ export interface Monster {
   hasSpecialItem: boolean;
   cute: boolean;
   focused: boolean;
+  invisible?: boolean;
+  hideShadow?: boolean;
+  waiter?: boolean;
+  shellHealth?: number;
+  shellGone?: boolean;
+  seenPlayer?: boolean;
+  rotation?: number;
+  targetRotation?: number;
+  turningRight?: boolean;
+  wasHitCounter?: number;
+  maxSpeed?: number;
+  spawning?: number;
+  scale?: number;
+  pupating?: boolean;
+  metamorph?: number;
+  shake?: number;
 }
 
 export interface MonsterRandom {
@@ -168,6 +184,83 @@ export function createBug(stats: MonsterStats, x: number, y: number, facing: num
   return m;
 }
 
+export function createRockCrab(stats: MonsterStats, x: number, y: number, r: MonsterRandom): Monster {
+  const m = base("crab", "Rock Crab", stats, x, y, r);
+  m.waiter = r.nextDouble() < 0.4;
+  m.threshold = 3;
+  m.shellHealth = 5;
+  m.shellGone = false;
+  return m;
+}
+
+export function createDuggy(stats: MonsterStats, x: number, y: number, r: MonsterRandom): Monster {
+  const m = base("duggy", "Duggy", stats, x, y, r);
+  m.walkingToward = false;
+  m.invisible = true;
+  m.damage = 0;
+  m.hideShadow = true;
+  m.interval = 100;
+  return m;
+}
+
+export function createGrub(stats: MonsterStats, x: number, y: number, r: MonsterRandom): Monster {
+  const m = base("grub", "Grub", stats, x, y, r);
+  m.leftDrift = r.nextDouble() < 0.5;
+  m.facing = r.next(4);
+  m.targetRotation = r.next(4) / Math.PI;
+  m.rotation = r.next(4) / Math.PI;
+  m.metamorph = 2000;
+  return m;
+}
+
+export function createFly(stats: MonsterStats, x: number, y: number, r: MonsterRandom): Monster {
+  const m = base("fly", "Fly", stats, x, y, r);
+  m.slipperiness = 24 + r.next(-10, 10);
+  m.walkingToward = false;
+  m.hideShadow = true;
+  m.spawning = 1000;
+  m.rotation = 0;
+  m.targetRotation = 0;
+  m.wasHitCounter = 0;
+  m.scale = 0;
+  m.interval = 75;
+  return m;
+}
+
+export function createBat(stats: MonsterStats, x: number, y: number, r: MonsterRandom): Monster {
+  const m = base("bat", "Bat", stats, x, y, r);
+  m.slipperiness = 20 + r.next(-5, 6);
+  m.walkingToward = false;
+  m.hideShadow = true;
+  m.rotation = 0;
+  m.targetRotation = 0;
+  m.wasHitCounter = 0;
+  m.maxSpeed = 5;
+  m.seenPlayer = false;
+  m.frame = 4;
+  m.interval = 80;
+  return m;
+}
+
+export function createStoneGolem(stats: MonsterStats, x: number, y: number, mineLevel: number, r: MonsterRandom): Monster {
+  const m = base("golem", "Stone Golem", stats, x, y, r);
+  m.walkingToward = false;
+  m.slipperiness = 2;
+  m.jitter = 0;
+  m.hideShadow = true;
+  m.seenPlayer = false;
+  m.frame = 16;
+  if (mineLevel > 80) {
+    m.damage *= 2;
+    m.health = Math.trunc(m.health * 2.5);
+  } else if (mineLevel > 40) {
+    m.damage = Math.trunc(m.damage * 1.5);
+    m.health = Math.trunc(m.health * 1.75);
+  }
+  m.maxHealth = m.health;
+  return m;
+}
+
 export function monsterBox(m: Monster): Rect {
   return { x: Math.trunc(m.x) + 8, y: Math.trunc(m.y) + 16, w: 48, h: 32 };
 }
@@ -197,6 +290,10 @@ export interface MonsterWorld {
   farmerPosition: { x: number; y: number };
   hitFarmer(m: Monster): void;
   random: MonsterRandom;
+  diggable?(tx: number, ty: number): boolean;
+  digHole?(tx: number, ty: number): void;
+  spawn?(m: Monster): void;
+  createFly?(x: number, y: number): Monster | null;
 }
 
 function blocked(m: Monster, r: Rect, w: MonsterWorld) {
@@ -399,20 +496,278 @@ export function awayFromFarmer(box: Rect, farmer: Rect, facing: number, r: Monst
   return { x: x * (50 + r.next(-20, 20)), y: y * (50 + r.next(-20, 20)) };
 }
 
+function animateRange(m: Monster, start: number, count: number, interval: number, ms: number, loop = true) {
+  if (m.frame < start || m.frame >= start + count) m.frame = start;
+  m.frameTimer += ms;
+  if (m.frameTimer <= interval) return;
+  m.frameTimer = 0;
+  if (m.frame + 1 < start + count) m.frame++;
+  else if (loop) m.frame = start;
+}
+
+function generalDirection(m: Monster, farmer: Rect) {
+  const s = standingPixel(m);
+  const dx = farmer.x + farmer.w / 2 - s.x, dy = farmer.y + farmer.h / 2 - s.y;
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 1 : 3;
+  return dy > 0 ? 2 : 0;
+}
+
+function steer(m: Monster, w: MonsterWorld, maxSpeed: number, extra: number, nearFactor: number, near: number) {
+  const s = standingPixel(m);
+  const f = w.farmer;
+  let dx = -(f.x + f.w / 2 - s.x), dy = f.y + f.h / 2 - s.y;
+  const dist = Math.max(1, Math.abs(dx) + Math.abs(dy));
+  if (dist < near) {
+    m.vx = Math.max(-maxSpeed, Math.min(maxSpeed, m.vx * nearFactor));
+    m.vy = Math.max(-maxSpeed, Math.min(maxSpeed, m.vy * nearFactor));
+  }
+  dx /= dist;
+  dy /= dist;
+  if ((m.wasHitCounter ?? 0) <= 0) {
+    const target = Math.atan2(-dy, dx) - Math.PI / 2;
+    m.targetRotation = target;
+    const rot = m.rotation ?? 0;
+    if (Math.abs(target) - Math.abs(rot) > 2.748894 && w.random.nextDouble() < 0.5) m.turningRight = true;
+    else if (Math.abs(target) - Math.abs(rot) < 0.3926991) m.turningRight = false;
+    const sign = Math.sign(target - rot);
+    m.rotation = (m.turningRight ? rot - sign * 0.04908739 : rot + sign * 0.04908739) % (Math.PI * 2);
+    m.wasHitCounter = m.kind === "fly" ? 5 + w.random.next(-1, 2) : 0;
+  }
+  const speed = Math.min(maxSpeed, Math.max(m.kind === "fly" ? 2 : 1, maxSpeed - dist / 64 / 2)) + extra;
+  const cx = Math.cos((m.rotation ?? 0) + Math.PI / 2), cy = -Math.sin((m.rotation ?? 0) + Math.PI / 2);
+  m.vx += (-cx * speed) / 6 + w.random.next(-10, 10) / 100;
+  m.vy += (-cy * speed) / 6 + w.random.next(-10, 10) / 100;
+  if (Math.abs(m.vx) > Math.abs(-cx * maxSpeed)) m.vx -= (-cx * speed) / 6;
+  if (Math.abs(m.vy) > Math.abs(-cy * maxSpeed)) m.vy -= (-cy * speed) / 6;
+}
+
+function crabUpdate(m: Monster, w: MonsterWorld, ms: number) {
+  if (m.waiter && (m.shellHealth ?? 0) > 4) {
+    m.threshold = 0;
+    halt(m);
+    return;
+  }
+  if (!m.shellGone) {
+    updateMovement(m, w, ms);
+    if (!withinThreshold(m, w.farmer)) halt(m);
+    if (m.moving.some(Boolean)) {
+      animate(m, [8, 4, 0, 12][m.facing], ms);
+      if (m.frame % 4 === 0) m.frame++;
+    } else m.frame = [8, 4, 0, 12][m.facing];
+    return;
+  }
+  m.walkingToward = false;
+  setOnly(m, generalDirection(m, w.farmer));
+  movePosition(m, w);
+  animate(m, [8, 4, 0, 12][m.facing], ms);
+  m.frame = 16 + (m.frame % 4);
+}
+
+function duggyUpdate(m: Monster, w: MonsterWorld, ms: number) {
+  if (m.stun > 0) return;
+  const b = monsterBox(m);
+  const f = w.farmer;
+  const fx = f.x + f.w / 2, fy = f.y + f.h / 2;
+  if (m.frame < 4) {
+    const inflated = { x: b.x - 128, y: b.y - 128, w: b.w + 256, h: b.h + 256 };
+    const near = fx >= inflated.x && fx < inflated.x + inflated.w && fy >= inflated.y && fy < inflated.y + inflated.h;
+    if (!m.invisible || near) {
+      if (m.invisible) {
+        const tx = Math.floor(fx / 64), ty = Math.floor(fy / 64);
+        if (!w.diggable?.(tx, ty)) return;
+        m.x = tx * 64;
+        m.y = ty * 64;
+      }
+      m.invisible = false;
+      animateRange(m, 0, 4, 100, ms, false);
+      if (m.frame === 3 && m.frameTimer === 0) m.frame = 4;
+    }
+  }
+  if (m.frame >= 4 && m.frame < 8) {
+    m.damage = 8;
+    blocked(m, monsterBox(m), w);
+    animateRange(m, 4, 4, 220, ms, false);
+    if (m.frame === 7 && m.frameTimer === 0) m.frame = 8;
+  }
+  if (m.frame >= 8) {
+    animateRange(m, 8, 4, 220, ms, false);
+    if (m.frame >= 10) {
+      m.invisible = true;
+      m.frame = 0;
+      w.digHole?.(Math.floor(standingPixel(m).x / 64), Math.floor(standingPixel(m).y / 64));
+      m.damage = 0;
+    }
+  }
+}
+
+function grubUpdate(m: Monster, w: MonsterWorld, ms: number) {
+  if (m.pupating) {
+    m.scale = 1 + Math.sin(Date.now() * 0.3926991) / 12;
+    m.metamorph = (m.metamorph ?? 0) - ms;
+    if (m.metamorph <= 0) {
+      m.health = -500;
+      const fly = w.createFly?.(m.x, m.y);
+      if (fly) w.spawn?.(fly);
+    }
+    return;
+  }
+  if (m.health <= Math.trunc(m.maxHealth / 2) - 2) {
+    m.metamorph = (m.metamorph ?? 0) - ms;
+    if (m.metamorph <= 0) {
+      animateRange(m, 16, 4, 125, ms, false);
+      if (m.frame === 19) {
+        m.pupating = true;
+        m.metamorph = 4500;
+      }
+      return;
+    }
+    const s = standingPixel(m);
+    const f = w.farmer;
+    const px = f.x + f.w / 2, py = f.y + f.h / 2;
+    if (Math.abs(py - s.y) > 128) setOnly(m, px > s.x ? 3 : 1);
+    else if (Math.abs(px - s.x) > 128) setOnly(m, py > s.y ? 0 : 2);
+    movePosition(m, w);
+    animate(m, [8, 4, 0, 12][m.facing], ms);
+    return;
+  }
+  updateMovement(m, w, ms);
+  if (withinThreshold(m, w.farmer)) {
+    m.scale = 1;
+    m.rotation = 0;
+    if (m.moving.some(Boolean)) animate(m, [8, 4, 0, 12][m.facing], ms);
+  } else if (m.moving.some(Boolean)) {
+    halt(m);
+    m.facing = w.random.next(4);
+    m.targetRotation = w.random.next(4) / Math.PI;
+    m.rotation = w.random.next(4) / Math.PI;
+  } else m.rotation = m.targetRotation;
+}
+
+function flyUpdate(m: Monster, w: MonsterWorld, ms: number) {
+  movePosition(m, w);
+  if ((m.wasHitCounter ?? 0) >= 0) m.wasHitCounter = (m.wasHitCounter ?? 0) - ms;
+  animateRange(m, m.facing === 0 ? 8 : m.facing === 2 ? 0 : 4, 4, 75, ms);
+  if ((m.spawning ?? -1) >= 0) {
+    m.spawning = (m.spawning ?? 0) - ms;
+    m.scale = 1 - Math.max(0, m.spawning) / 1000;
+    return;
+  }
+  m.scale = 1;
+  if (m.invincible > 0) return;
+  m.facing = 0;
+  steer(m, w, 7, 0, 1.1, 64);
+}
+
+function batUpdate(m: Monster, w: MonsterWorld, ms: number) {
+  movePosition(m, w);
+  if ((m.wasHitCounter ?? 0) >= 0) m.wasHitCounter = (m.wasHitCounter ?? 0) - ms;
+  if (m.focused || withinThreshold(m, w.farmer, 6) || m.seenPlayer) {
+    m.seenPlayer = true;
+    animateRange(m, 0, 4, 80, ms);
+    if (m.invincible > 0) return;
+    steer(m, w, m.maxSpeed ?? 5, 0, 1.05, 64);
+  } else {
+    m.frame = 4;
+    halt(m);
+  }
+}
+
+function golemUpdate(m: Monster, w: MonsterWorld, ms: number) {
+  if (m.walkingToward) updateMovement(m, w, ms);
+  if (!m.seenPlayer) {
+    if (withinThreshold(m, w.farmer)) m.seenPlayer = true;
+    else m.frame = 16;
+    return;
+  }
+  if (m.frame >= 16) {
+    animateRange(m, 16, 8, 75, ms, false);
+    if (m.frame === 23 && m.frameTimer === 0) {
+      m.frame = 0;
+      m.threshold = 16;
+      m.walkingToward = true;
+      m.jitter = 0.01;
+      m.hideShadow = false;
+    }
+    return;
+  }
+  if (m.moving.some(Boolean)) animate(m, [8, 4, 0, 12][m.facing], ms);
+}
+
 export function updateMonster(m: Monster, w: MonsterWorld, ms: number) {
   if (m.invincible > 0) m.invincible -= ms;
-  updateMovement(m, w, ms);
-  if (m.stun > 0) m.stun = Math.max(0, m.stun - ms);
-  else if (m.kind === "slime") slimeBehavior(m, w, ms);
-  if (m.kind === "slime") slimeAnimation(m, ms);
-  else if (m.moving.some(Boolean)) animate(m, [8, 4, 0, 12][m.facing], ms);
+  switch (m.kind) {
+    case "crab":
+      crabUpdate(m, w, ms);
+      break;
+    case "duggy":
+      duggyUpdate(m, w, ms);
+      break;
+    case "grub":
+      grubUpdate(m, w, ms);
+      break;
+    case "fly":
+      flyUpdate(m, w, ms);
+      break;
+    case "bat":
+      batUpdate(m, w, ms);
+      break;
+    case "golem":
+      golemUpdate(m, w, ms);
+      break;
+    default:
+      updateMovement(m, w, ms);
+      if (m.stun > 0) m.stun = Math.max(0, m.stun - ms);
+      else if (m.kind === "slime") slimeBehavior(m, w, ms);
+      if (m.kind === "slime") slimeAnimation(m, ms);
+      else if (m.moving.some(Boolean)) animate(m, [8, 4, 0, 12][m.facing], ms);
+  }
+  if (m.kind !== "slime" && m.kind !== "bug" && m.stun > 0) m.stun = Math.max(0, m.stun - ms);
+}
+
+export function hitWithPickaxe(m: Monster, farmer: Rect, r: MonsterRandom) {
+  if (m.kind !== "crab" || (m.shellHealth ?? 0) <= 0) return false;
+  m.shellHealth = (m.shellHealth ?? 0) - 1;
+  m.shake = 500;
+  m.waiter = false;
+  m.threshold = 3;
+  const away = awayFromFarmer(monsterBox(m), farmer, m.facing, r);
+  setTrajectory(m, away.x, away.y);
+  if (m.shellHealth <= 0) {
+    m.shellGone = true;
+    m.threshold = -1;
+  }
+  return true;
 }
 
 export function takeDamage(m: Monster, damage: number, trajectory: { x: number; y: number }, addedPrecision: number, r: MonsterRandom) {
   const dealt = Math.max(1, damage - m.resilience);
+  if (m.kind === "bat") m.seenPlayer = true;
   if (r.nextDouble() < m.missChance - m.missChance * addedPrecision) return -1;
+  if (m.kind === "crab") {
+    if (m.frame % 4 === 0 && !m.shellGone) return 0;
+    m.health -= dealt;
+    m.slipperiness = 3;
+    setTrajectory(m, trajectory.x, trajectory.y);
+    return dealt;
+  }
+  if (m.kind === "grub") {
+    if (m.pupating) {
+      setTrajectory(m, Math.trunc(trajectory.x / 2), Math.trunc(trajectory.y / 2));
+      return 0;
+    }
+    m.slipperiness = 4;
+    m.health -= dealt;
+    setTrajectory(m, trajectory.x, trajectory.y);
+    return dealt;
+  }
+  if (m.kind === "duggy") {
+    m.health -= dealt;
+    return dealt;
+  }
   m.health -= dealt;
   setTrajectory(m, Math.trunc(trajectory.x / 3), Math.trunc(trajectory.y / 3));
+  if (m.kind === "fly" || m.kind === "bat") m.wasHitCounter = 500;
+  if (m.kind === "bat") m.seenPlayer = true;
   return dealt;
 }
 
@@ -439,6 +794,7 @@ export function damageMonsters(
   weapon: WeaponStats,
   farmer: { box: Rect; facing: number; luckLevel: number; professions: number[] },
   r: MonsterRandom,
+  invincibleTimer = true,
 ): Hit[] {
   const hits: Hit[] = [];
   let crit = weapon.critChance;
@@ -461,7 +817,7 @@ export function damageMonsters(
     if (isCrit && farmer.professions.includes(29)) damage = Math.trunc(damage * 2);
     const dealt = takeDamage(m, damage, knock, weapon.precision / 10, r);
     if (m.stun < 50) m.stun = 0;
-    m.invincible = Math.trunc(450 / (weapon.type === 1 ? 3 : 2));
+    if (invincibleTimer) m.invincible = Math.trunc(450 / (weapon.type === 1 ? 3 : 2));
     hits.push({ monster: m, damage: dealt, crit: isCrit, killed: m.health <= 0 });
   }
   return hits;

@@ -1407,7 +1407,8 @@ Aproximaciones:
   - Tiles libres con `r ≤ monstruo` y distancia > 5. 0,175% de ítem especial. Grub y Dust Spirit suman vecinos con 40% y 60%.
   - Tiles no libres con suelo sólido: misma probabilidad y distancia; 1% de ítem especial.
   - Claros de piedras: 10% del claro y 12% por piedra.
-- Implementados: `Green Slime` y `Bug`. Los demás todavía no aparecen.
+- Implementados: `Green Slime`, `Bug`, `Rock Crab`, `Duggy`, `Grub`, `Fly`, `Bat` y `Stone Golem`, que cubren los niveles 1–40.
+- Todavía no aparecen los demás, de los niveles 41–120 y de las áreas infestadas.
 
 **`Data/Monsters`**: los campos son vida / daño / monedas mín / monedas máx / planeador / duración de movimiento al azar / botín / resiliencia / nerviosismo / umbral de persecución / velocidad / fallo / de mina / experiencia / nombre.
 - El botín se tira al crear el monstruo: cada par `id prob` entra si `NextDouble() < prob`.
@@ -1473,6 +1474,49 @@ Aproximaciones:
   - Suelta el botín y da la experiencia de combate (1/3 en la granja).
   - Polvo de `animations` fila 44.
 
+**`RockCrab`**:
+- 40% "espera": mientras conserve el caparazón entero no se mueve. Umbral 3.
+- Si el granjero sale del umbral, se detiene. Al moverse, salta el cuadro cerrado (`cuadro%4 == 0`).
+- Los golpes con el caparazón cerrado (`cuadro%4 == 0`) hacen 0. Los demás golpes ponen resbaladizo 3 y aplican el empuje completo.
+- Cada golpe de pico (`hitWithTool`) resta 1 al caparazón (5), sacude 500 ms y lo empuja.
+- Sin caparazón persigue siempre en la dirección general del granjero, con los cuadros 16–19.
+
+**`Duggy`**:
+- Invisible y sin daño.
+- Si el granjero entra en su caja inflada 128 px y está sobre tierra excavable (o el índice 0), aparece en el tile del granjero.
+- Animación:
+  - Cuadros 0–3 a 100 ms.
+  - Cuadros 4–7 a 220 ms, con daño 8 por contacto.
+  - Cuadros 8–9, y vuelve a esconderse.
+- Al esconderse deja un hoyo: el índice 0 de `Back`.
+
+**`Grub`**:
+- Persigue dentro del umbral. Fuera de él se detiene con giro aleatorio.
+- Con vida ≤ máx/2 − 2: huye en el eje lejano.
+- Tras 2000 ms anima los cuadros 16–19 a 125 ms y pasa a pupa por 4500 ms. La escala late con `1 + sin(ms·0,39)/12` y los golpes no la dañan.
+- Al terminar se convierte en `Fly`.
+
+**`Fly`** y **`Bat`** (planeadores):
+- Mosca: resbaladizo `24 ± 10`. Aparece con escala de 0 a 1 en 1000 ms.
+- Murciélago: resbaladizo `20 + Next(−5,6)`. Cuelga en el cuadro 4 hasta ver al granjero a 6 tiles; después aletea en los cuadros 0–3 a 80 ms.
+- Ambos se dirigen girando 0,049 rad por paso hacia el granjero.
+  - Velocidad `+= −dir·v/6 ± 0,1`, con `v = clamp(máx − dist/128, 1 o 2, máx)`.
+  - Máximo 5 para el murciélago y 7 para la mosca.
+  - Cerca se acelera ×1,05 o ×1,1.
+- Un golpe suspende el giro 500 ms.
+- Dibujo:
+  - Murciélago en `(X+32, Y+32)` sobre todas las capas, con sombra en `(X+32, Y+64)`.
+  - Mosca rotada en `(X+32, Y−16)` con sombra en `(X+32, Y+16)`.
+
+**`RockGolem`**:
+- Quieto en el cuadro 16 (parece una roca) hasta que el granjero entra en el umbral.
+- Entonces anima los cuadros 16–23 a 75 ms y pasa a perseguir con umbral 16, nerviosismo 0,01 y sombra.
+- En los niveles 41–80: vida ×1,75 y daño ×1,5. Por encima de 80: vida ×2,5 y daño ×2.
+
+**Herramientas pesadas** (hacha, pico, azada):
+- Al usarse dañan a los monstruos en un cuadrado de 64 px centrado en el punto de la herramienta. Daño `mejora+1` a `3·(mejora+1)`, sin crítico ni invencibilidad.
+- El pico golpea primero el caparazón del cangrejo.
+
 **Daño al granjero** (`Farmer.takeDamage`):
 - `daño + Next(mín(−1, −d/8), máx(1, d/8))`, menos defensa (con alivio aleatorio si defensa ≥ d/2). Mínimo 1.
 - 1200 ms de invencibilidad con parpadeo. Número rojo.
@@ -1490,7 +1534,6 @@ Aproximaciones:
 **Espada inicial**: la primera vez que se entra a `Mine` se recibe la Espada oxidada `(W)0` y se marca el evento 100162. El evento de Marlon todavía no se reproduce.
 
 **Aproximaciones**:
-- Solo hay slimes y bichos.
 - Faltan dagas, mazos, especiales, anillos, defensa, buffs, botín extra (`getExtraDropItems`) y apareamiento de slimes.
 - Sin deslizamiento en esquinas para monstruos, brillo exacto (se usa un pulso rojo), sacudida de pantalla, sonidos, ni pérdida de ítems al desmayarse.
 - No hay mensaje al desmayarse.
