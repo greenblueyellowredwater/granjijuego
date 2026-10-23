@@ -24,6 +24,7 @@ import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, 
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
 import { dayTileGlows, LightContext, locationLights, torchLight, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
 import { LightingOverlay } from "../render/lighting.ts";
+import { ElevatorMenu } from "../render/elevator-menu.ts";
 import { numberSpriteQuads } from "../render/skills-page.ts";
 import { createBat, createBug, createDuggy, createFly, createGrub, createRockCrab, createStoneGolem, hitWithPickaxe, createGreenSlime, damageMonsters, FARMER_INVINCIBLE_MS, farmerTakeDamage, healthBarLayout, monsterBox, parseMonsterData, standingPixel, SWORD_FRAMES, swordArea, swordFrameTimes, swordPose, updateMonster, type Monster } from "../world/monsters.ts";
 import { type MonsterSpawn, checkStoneForItems, LADDER_DOWN, LADDER_UP, MINE_SHEET, mineLadderLights, mineLevelOf, mineLighting, mineLocationName, mineMapImage, mineMapNumber, outdoorStoneDestroyed, populateLevel, type MineMap, type MinerContext } from "../world/mines.ts";
@@ -138,6 +139,7 @@ export interface WorldStart {
   y?: number;
   facing?: Facing;
   wakeUp?: boolean;
+  elevator?: boolean;
 }
 
 export interface WorldText extends HudStrings {
@@ -229,6 +231,7 @@ export class World extends Phaser.Scene {
   private shop: ShopMenu | null = null;
   private gameMenu: GameMenu | null = null;
   private levelUp: LevelUpMenu | null = null;
+  private elevator: ElevatorMenu | null = null;
   private shipping: ShippingMenu | null = null;
   private chestMenu: ChestMenu | null = null;
   private menuFarmer: FarmerSprite | null = null;
@@ -254,7 +257,7 @@ export class World extends Phaser.Scene {
   private toolImage: Phaser.GameObjects.Image | null = null;
   private temps: TempSprite[] = [];
   private tempPool: Phaser.GameObjects.Image[] = [];
-  private mine: { level: number; stonesLeft: number; ladderHasSpawned: boolean; enemies: number; lighting: [number, number, number, number]; start: { x: number; y: number } } | null = null;
+  private mine: { level: number; stonesLeft: number; ladderHasSpawned: boolean; enemies: number; lighting: [number, number, number, number]; start: { x: number; y: number }; elevator: { x: number; y: number } | null } | null = null;
   private shakes = new Map<Entity, number>();
   private monsters: Monster[] = [];
   private monsterImages = new Map<Monster, Phaser.GameObjects.Image[]>();
@@ -421,7 +424,7 @@ export class World extends Phaser.Scene {
     const { dark } = mineMapImage(level, mineMapNumber(level));
     const level$ = populateLevel(this.mineMap(), level, dark, new DotNetRandom(Math.floor(Math.random() * 2147483647)), this.minerContext(), (id) => this.isStoneId(id));
     const light = mineLighting(level, dark, daySaveRandom(this.gsqState(), state.daysPlayed, level, 4 * level));
-    this.mine = { level, stonesLeft: level$.stonesLeft, ladderHasSpawned: false, enemies: 0, lighting: light.color, start: level$.start };
+    this.mine = { level, stonesLeft: level$.stonesLeft, ladderHasSpawned: false, enemies: 0, lighting: light.color, start: level$.start, elevator: this.findElevator() };
     state.deepestMineLevel = Math.max(state.deepestMineLevel ?? 0, level);
     if (level === 120) state.timesReachedMineBottom = (state.timesReachedMineBottom ?? 0) + 1;
     this.entities = level$.entities;
@@ -672,6 +675,39 @@ export class World extends Phaser.Scene {
     for (let i = used; i < this.floaterPool.length; i++) this.floaterPool[i].setVisible(false);
   }
 
+  private findElevator() {
+    for (let y = 0; y < this.location.height; y++) for (let x = 0; x < this.location.width; x++) if (this.location.tileIndexOnSheet("Buildings", x, y, MINE_SHEET) === 112) return { x, y: y + 1 };
+    return null;
+  }
+
+  private openElevator() {
+    if (!this.elevator) return false;
+    this.elevator.open = true;
+    return true;
+  }
+
+  private elevatorClick(px: number, py: number) {
+    const e = this.elevator;
+    if (!e) return;
+    const hit = e.hit(this.params.state.deepestMineLevel ?? 0, this.cameras.main.width, this.cameras.main.height, px, py);
+    if (!hit) return;
+    if (hit.kind === "close") {
+      e.open = false;
+      return;
+    }
+    const current = this.mine?.level ?? 0;
+    if (hit.level === 0) {
+      if (this.mine) {
+        e.open = false;
+        this.warpTo("Mine", 17, 4, Facing.Right);
+      }
+      return;
+    }
+    if (hit.level === current) return;
+    e.open = false;
+    this.warpTo(mineLocationName(hit.level), -1, -1, Facing.Down, true);
+  }
+
   private isStoneId(id: string) {
     const data = this.params.items.objects[id] as { Name?: string; Category?: number } | undefined;
     return data?.Category === -999 && data?.Name === "Stone";
@@ -693,6 +729,7 @@ export class World extends Phaser.Scene {
       this.warpTo(mineLocationName(this.mine.level + 1), -1, -1);
       return true;
     }
+    if (index === 112) return this.openElevator();
     if (index !== LADDER_UP || !this.question) return false;
     const loc = this.params.strings["Strings\\Locations"] ?? {};
     void this.question.ask(" ", [loc["Mines_LeaveMine"] ?? "", loc["Mines_DoNothing"] ?? ""]).then((answer) => {
@@ -1484,6 +1521,7 @@ export class World extends Phaser.Scene {
     learnDefaultRecipes(this.params.state, this.params.recipes);
     this.shipping = new ShippingMenu(this, HUD_DEPTH + 55);
     this.chestMenu = new ChestMenu(this, HUD_DEPTH + 35);
+    this.elevator = new ElevatorMenu(this, HUD_DEPTH + 40);
     this.levelUp = new LevelUpMenu(this, HUD_DEPTH + 60, fontData, this.cache.json.get(SMALL_FONT_DATA) as SpriteFontData | undefined);
     this.menuFarmer = new FarmerSprite(this, this.appearance, this.params.clothing, this.featureXOffset, this.featureYOffset, true);
 
@@ -1503,7 +1541,8 @@ export class World extends Phaser.Scene {
     kb.on("keydown-ENTER", () => (this.dialogueBox?.open ? this.dialogueBox.advance() : this.question?.confirm()));
     kb.on("keydown-SPACE", () => this.question?.confirm());
     kb.on("keydown-ESC", () => {
-      if (this.shop?.open) this.shop.close();
+      if (this.elevator?.open) this.elevator.open = false;
+      else if (this.shop?.open) this.shop.close();
       else if (this.chestMenu?.open) this.closeChest();
       else if (this.question?.open) this.question.cancel();
       else this.toggleGameMenu();
@@ -1514,6 +1553,10 @@ export class World extends Phaser.Scene {
     for (const k of ["DOWN", "S"]) kb.on(`keydown-${k}`, () => this.question?.move(1));
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (this.elevator?.open) {
+        this.elevatorClick(p.x, p.y);
+        return;
+      }
       if (this.shipping?.summary) {
         if (this.shipping.hitOk(this.cameras.main.width, this.cameras.main.height, p.x, p.y)) this.finishShipping();
         return;
@@ -1557,7 +1600,7 @@ export class World extends Phaser.Scene {
   }
 
   private spawnTile(start: WorldStart) {
-    if (this.mine) return this.mine.start;
+    if (this.mine) return start.elevator && this.mine.elevator ? this.mine.elevator : this.mine.start;
     const fx = start.x ?? Math.floor(this.location.width / 2);
     const fy = start.y ?? Math.floor(this.location.height / 2);
     const p = positionForTile(fx, fy);
@@ -2234,6 +2277,8 @@ export class World extends Phaser.Scene {
       return true;
     };
     switch (words[0]) {
+      case "MineElevator":
+        return this.openElevator();
       case "Mine":
         if (words[1] && words[1] !== "1") return false;
         this.warpTo(mineLocationName(1), -1, -1);
@@ -2407,7 +2452,7 @@ export class World extends Phaser.Scene {
     else this.message = `Acción todavía no implementada: ${action}`;
   }
 
-  private warpTo(target: string, x: number, y: number, facing = this.body.facing) {
+  private warpTo(target: string, x: number, y: number, facing = this.body.facing, elevator = false) {
     if (this.warping) return;
     const mapPath = resolveMapPath(this.params.locations, target);
     if (!this.params.manifest.maps.includes(mapPath)) {
@@ -2417,12 +2462,12 @@ export class World extends Phaser.Scene {
     this.warping = true;
     this.cameras.main.fade(150, 0, 0, 0, true);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      this.scene.restart({ ...this.params, start: { location: target, x, y, facing } });
+      this.scene.restart({ ...this.params, start: { location: target, x, y, facing, ...(elevator ? { elevator: true } : {}) } });
     });
   }
 
   private get timePasses() {
-    return !this.fishing?.bar && !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.endingDay && !this.warping;
+    return !this.fishing?.bar && !this.elevator?.open && !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.endingDay && !this.warping;
   }
 
   private get canMove() {
@@ -2599,7 +2644,7 @@ export class World extends Phaser.Scene {
     this.weatherFx?.draw(flags, this.outdoors, this.cameras.main, time);
     this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: flags.raining }));
     this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
-    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.dialogueBox?.open && !this.question?.open && !this.fishing?.bar);
+    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.dialogueBox?.open && !this.question?.open && !this.fishing?.bar && !this.elevator?.open);
     this.dialogueBox?.update(this.game.loop.rawDelta);
     this.shipping?.update(Math.min(250, this.game.loop.rawDelta));
     const pointer = this.input.activePointer;
@@ -2608,6 +2653,7 @@ export class World extends Phaser.Scene {
     this.drawGameMenu(pointer);
     this.drawChest(pointer);
     this.shipping?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items);
+    this.elevator?.draw(state.deepestMineLevel ?? 0, this.mine?.level ?? 0, this.cameras.main.width, this.cameras.main.height, { x: pointer.x, y: pointer.y });
     this.levelUp?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items, this.params.strings["Strings\\UI"] ?? {}, { x: pointer.x, y: pointer.y });
     this.dialogueBox?.draw(this.cameras.main.width, this.cameras.main.height, speaker && this.textures.exists(speaker) ? speaker : null);
     this.hud?.draw(

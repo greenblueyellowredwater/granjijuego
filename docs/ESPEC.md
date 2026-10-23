@@ -1369,8 +1369,20 @@ Aproximaciones:
   - Calidad con `CreateDaySaveRandom(x, y·777, 0)`: iridio con Botánico; si no, oro con forrajeo/30 y plata con forrajeo/15.
   - Dan 7 XP de forrajeo.
 
+**Ascensor** (`MineElevatorMenu`):
+- Se abre con la acción `MineElevator` (en `Mine`, tile 17,3) o con el tile 112 de `Buildings` en los niveles.
+- Botones: uno cada 5 niveles hasta `mín(nivel más profundo, 120)`.
+  - El ancho es `n > 50 ? 548 : mín(284, n·44+64)`, con n = nivel/5.
+  - Los botones miden 44 px. Empiezan en `(x+44, y+42)`, avanzan 44 px y saltan de fila al pasar `x+ancho−32`.
+- Dibujo:
+  - Fondo negro al 40% y caja `drawDialogueBox(x, y−56, ancho+21, alto+64)`.
+  - Cada botón es `Cursors (256 o 267 con el mouse encima, 256, 10, 10)` ×4 con sombra negra al 50% desplazada (−4, +4).
+  - El número va en `NumberSprite` a escala 0,5: dorado, o gris·0,75 si es el nivel actual.
+  - Botón de cierre arriba a la derecha.
+- Elegir 0 desde un nivel lleva a `Mine` (17,4) mirando a la derecha. Otro nivel entra a la mina y ubica al granjero bajo el ascensor.
+
 **Aproximaciones**:
-- Sin monstruos ni combate, barriles, ascensor, pozos, niveles infestados ni cantera.
+- Sin barriles, pozos, niveles infestados ni cantera.
 - Sin mapas alternativos tras llegar al fondo, luces arcoíris, niebla, caminos del minero, Skull Cavern ni suerte diaria (vale 0).
 - Las rocas 2×2 no se pueden romper todavía.
 - Las luces se dibujan sin tinte.

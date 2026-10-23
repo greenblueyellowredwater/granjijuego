@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync } from "node:fs";
+import { elevatorLayout } from "../../src/render/elevator-layout.ts";
 import puppeteer, { type KeyInput, type Page } from "puppeteer-core";
 
 const BASE = process.env.E2E_URL ?? "http://localhost:5173";
@@ -433,6 +434,25 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       }
       if (hp >= 100) throw new Error(`El slime no hizo daño: ${hp}`);
       await page.screenshot({ path: `${OUT}/combat.png` });
+    },
+  ],
+  [
+    "usa el ascensor de la mina para bajar al nivel 40",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=Mine&x=17&y=4`);
+      await waitStatus(page, /Mine .* tile 17,4/);
+      await world(`(w.params.state.deepestMineLevel = 45, true)`);
+      await holdUntil(page, "w", /Enfrente: MineElevator/);
+      await page.keyboard.press("x");
+      await settle();
+      await page.screenshot({ path: `${OUT}/elevator.png` });
+      const size = (await world(`({ w: w.cameras.main.width, h: w.cameras.main.height })`)) as { w: number; h: number };
+      const btn = elevatorLayout(45, size.w, size.h).buttons.find((b) => b.level === 40)!;
+      await page.mouse.click(btn.x + 20, btn.y + 20);
+      await waitStatus(page, /UndergroundMine40 /);
+      const ok = await world(`(() => { const e = w.mine.elevator; const t = { x: Math.floor((w.body.x + 32) / 64), y: Math.floor((w.body.y + 16) / 64) }; return !!e && t.x === e.x && t.y === e.y; })()`);
+      if (!ok) throw new Error("No apareció junto al ascensor");
     },
   ],
 ];
