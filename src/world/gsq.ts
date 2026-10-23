@@ -13,9 +13,22 @@ export interface GsqState {
   greenRainDays: number[];
 }
 
+export interface GsqPlayer {
+  mailReceived: string[];
+  mailbox: string[];
+  mailForTomorrow: string[];
+  eventsSeen: string[];
+  friendship: Record<string, { points: number }>;
+  male: boolean;
+  totalEarned: number;
+  conversationTopics: string[];
+  weather: string;
+}
+
 export interface GsqContext {
   state: GsqState;
   random: DotNetRandom;
+  player?: GsqPlayer;
   onError?: (query: string, error: string) => void;
 }
 
@@ -182,6 +195,46 @@ export const RESOLVERS: Record<string, GsqResolver> = {
     const rng = daySaveRandom(ctx.state, deterministicHash("summer_rain_chance"));
     const chance = Math.fround(0.12 + Math.fround(ctx.state.dayOfMonth * Math.fround(0.003)));
     return rng.nextDouble() < chance;
+  },
+  PLAYER_HAS_MAIL: (args, ctx) => {
+    const p = ctx.player;
+    if (!p) return false;
+    const id = arg(args, 2, "string mailId");
+    const type = (args[3] ?? "any").toLowerCase();
+    if (type === "mailbox") return p.mailbox.includes(id);
+    if (type === "tomorrow") return p.mailForTomorrow.includes(id);
+    if (type === "received") return p.mailReceived.includes(id);
+    return p.mailReceived.includes(id) || p.mailbox.includes(id) || p.mailForTomorrow.includes(id);
+  },
+  PLAYER_HAS_SEEN_EVENT: (args, ctx) => !!ctx.player?.eventsSeen.includes(arg(args, 2, "string eventId")),
+  PLAYER_MONEY_EARNED: (args, ctx) => {
+    const min = int(args, 2, "int minAmount"), max = optionalInt(args, 3, 2147483647, "int maxAmount");
+    const v = ctx.player?.totalEarned ?? 0;
+    return v >= min && v <= max;
+  },
+  PLAYER_FRIENDSHIP_POINTS: (args, ctx) => {
+    const npc = arg(args, 2, "string npcName");
+    const min = int(args, 3, "int minPoints"), max = optionalInt(args, 4, 2147483647, "int maxPoints");
+    const points = Object.entries(ctx.player?.friendship ?? {}).filter(([n]) => npc.toLowerCase() === "any" || n === npc).map(([, f]) => f.points);
+    return points.some((v) => v >= min && v <= max);
+  },
+  PLAYER_HEARTS: (args, ctx) => {
+    const npc = arg(args, 2, "string npcName");
+    const min = int(args, 3, "int minHearts"), max = optionalInt(args, 4, 2147483647, "int maxHearts");
+    const hearts = Object.entries(ctx.player?.friendship ?? {}).filter(([n]) => npc.toLowerCase() === "any" || n === npc).map(([, f]) => Math.trunc(f.points / 250));
+    return hearts.some((v) => v >= min && v <= max);
+  },
+  PLAYER_GENDER: (args, ctx) => (arg(args, 2, "string genderName").toLowerCase() === "male") === !!ctx.player?.male,
+  PLAYER_HAS_CONVERSATION_TOPIC: (args, ctx) => !!ctx.player?.conversationTopics.includes(arg(args, 2, "string topic")),
+  PLAYER_NPC_RELATIONSHIP: () => false,
+  WEATHER: (args, ctx) => args.slice(2).some((w) => w.toLowerCase() === (ctx.player?.weather ?? "Sun").toLowerCase()),
+  DATE_RANGE: (args, ctx) => {
+    const totalDays = (year: number, s: SeasonName, day: number) => (year - 1) * 112 + SEASON_ORDER.indexOf(s) * 28 + day - 1;
+    const min = totalDays(int(args, 3, "int minYear"), season(args, 1), int(args, 2, "int minDayOfMonth"));
+    const maxYear = optionalInt(args, 6, 2147483647, "int maxYear");
+    const max = maxYear === 2147483647 ? Infinity : totalDays(maxYear, args[4] ? season(args, 4) : "winter", optionalInt(args, 5, 28, "int maxDayOfMonth"));
+    const now = totalDays(ctx.state.year, ctx.state.season, ctx.state.dayOfMonth);
+    return now >= min && now <= max;
   },
   IS_GREEN_RAIN_DAY: (_args, ctx) => {
     const t = tomorrow(ctx.state);

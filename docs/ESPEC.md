@@ -1632,6 +1632,61 @@ Aproximaciones:
 - Faltan festivales, `playerControl` y el desmayo como evento.
 - Saltar un evento no anima un fundido.
 
+## Spec S27: correo (`Game1.addMail*`, `GameLocation.mailbox`, `LetterViewerMenu`, `TriggerActions`)
+
+**Estado**: `mailbox` (cartas por leer), `mailForTomorrow` y `mailReceived`.
+- `addMailForTomorrow(id, sinCarta)` no hace nada si ya se recibió o se va a recibir. Con `sinCarta` agrega el sufijo `%&NL&%`.
+
+**Cada noche** (`_newDayAfterFade`), en este orden:
+1. Disparadores `DayEnding` de `Data/TriggerActions`. Cada acción se aplica una vez (`MarkActionApplied`); si se cumple `SkipPermanentlyCondition`, se descarta.
+   - `AddMail Current id [Tomorrow|Now|Received]` (por defecto Tomorrow).
+   - `MarkEventSeen Current id`.
+   - Las condiciones son GSQ: `PLAYER_HAS_MAIL` (tipos mailbox/tomorrow/received/any), `PLAYER_HAS_SEEN_EVENT`, `PLAYER_MONEY_EARNED`, `PLAYER_FRIENDSHIP_POINTS`, `PLAYER_HEARTS`, `PLAYER_GENDER`, `PLAYER_HAS_CONVERSATION_TOPIC`, `WEATHER` y `DATE_RANGE`.
+2. `ReceiveMailForTomorrow`: lo de mañana pasa al buzón, o a recibidos si tiene `%&NL&%`.
+3. Carta de regalo: se elige un NPC al azar entre las amistades. Con probabilidad `corazones·0,1`, si no es el cónyuge y `Data/mail` tiene su nombre, su carta va al buzón.
+4. Carta de estación: `estación_día_año` o, si no existe, `estación_día`.
+5. Disparadores `DayStarted`.
+
+**Buzón**:
+- Está en la acción `Mailbox` de la casa (`ActionTiles` de `Farmhouse`: tile 9,4 de la casa, por defecto 68,16).
+- Con cartas pendientes dibuja sobre él, oscilando `4·round(sin(ms/250), 2)`:
+  - el globo `Cursors (141,465,20,24)` al 75% en `(x·64, y·64−144)`;
+  - el sobre `(189,423,15,13)` con origen (7,6) en `(x·64+36, y·64−96)`.
+- Leer saca la primera carta y la marca como recibida (salvo `passedOut` o `Cooking`).
+
+**Carta** (`LetterViewerMenu`, 1280×720 centrado):
+- Texto:
+  - Se corta en `[#]`; lo que sigue es el título.
+  - `@` se reemplaza por el nombre. `${hombre^mujer}` según el género.
+  - `[letterbg n]` y `[textcolor c]` cambian fondo y color.
+  - `%action…%%` se ejecuta.
+- `%item … %%`:
+  - `id`/`object`: par al azar `id cantidad`.
+  - `bigobject`, `furniture`, `tools`.
+  - `money a b`: `Next(a, b)` redondeado a decenas, sumado al abrir.
+  - `cookingRecipe` (sin nombre: la receta de menor corazones `f <remitente sin "Cooking">` que falte) y `craftingRecipe` (con `_` → espacio), aprendidas al abrir.
+  - `quest`.
+- Fondo `letterBG ((bg%4)·320, bg ≥ 4 ? 204+(bg/4−1)·180 : 0, 320, 180)` ×4 desde el centro. La escala crece `0,003/ms` al abrir.
+  - Fondo 2 para `winter_5_2`, `winter_12_1` o "wizard". 1 para Sandy, 3 para Krobus, 4 para passedOut1/landslideDone/FizzIntro.
+- Páginas (`getStringBrokenIntoSectionsOfHeight`):
+  - Ancho 1216; alto 592, o 560 si hay algo que tomar.
+  - Corta cuando la línea alcanza `alto − 48` (líneas de 54 px).
+  - El texto va en `(x+32, y+32)` con `SpriteText` al 75%.
+- Botones: atrás `(352,495,12,11)` y adelante `(365,495,12,11)` ×4 en las esquinas inferiores. Adelante late `4 + sin(ms/201)/1.5`.
+- En la última página:
+  - El ítem va en una caja `letterBG (bg·24, 180, 24, 24)` de 96 px en `(centro−48, y+592)`.
+  - Debajo, "$ Ng enclosed" o la receta aprendida.
+- Clic:
+  - En el ítem lo toma.
+  - En la carta pasa de página; en la última, cierra.
+  - Fuera, cierra si no quedan ítems.
+- Eventos: `mail` agrega para mañana; `addMailReceived` alterna recibidos.
+
+**Aproximaciones**:
+- Sin colores de texto por fondo (se usa la fuente marrón).
+- Falta el botón de aceptar misión: la misión se agrega al abrir.
+- Faltan notas secretas, sonidos y el diálogo de inventario lleno: si no cabe, el ítem cae al suelo.
+
 ## Revisión S2: paridad de movimiento y dibujo (2026-10-21)
 
 Correcciones tras leer el IL. Antes eran supuestos y ahora siguen la spec S2:

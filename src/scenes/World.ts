@@ -24,6 +24,8 @@ import { ARCH_CATEGORY_COLOR, categoryColor, categoryNameKey, descriptionWidth, 
 import { formatTime, GameClock, isTimeToTurnOffLighting, lighting, nextDay, SEASON_ORDER, weatherIcon, type LightingContext } from "../world/clock.ts";
 import { dayTileGlows, LightContext, locationLights, torchLight, stepLightFade, tileChanges, type LightSource } from "../world/lights.ts";
 import { LightingOverlay } from "../render/lighting.ts";
+import { LetterMenu, paginateLetter } from "../render/letter-menu.ts";
+import { addMailForTomorrow, friendGiftLetter, parseLetter, receiveMailForTomorrow, runTriggers, seasonalLetter, type MailState, type TriggerAction } from "../world/mail.ts";
 import { EventRunner, findEvent, orderedEntries, parseCommands, type EventActor, type EventEnd, type EventHost, type PreconditionContext } from "../world/events.ts";
 import { ElevatorMenu } from "../render/elevator-menu.ts";
 import { numberSpriteQuads } from "../render/skills-page.ts";
@@ -179,6 +181,8 @@ export interface WorldData {
   machines: Record<string, MachineData>;
   fish: Record<string, string>;
   monsters?: Record<string, string>;
+  mail?: Record<string, string>;
+  triggerActions?: unknown[];
   strings: Record<string, Record<string, string>>;
   onStatus: (text: string) => void;
   onEnter?: (location: string, tile: { x: number; y: number }) => void;
@@ -232,6 +236,8 @@ export class World extends Phaser.Scene {
   private gameMenu: GameMenu | null = null;
   private levelUp: LevelUpMenu | null = null;
   private elevator: ElevatorMenu | null = null;
+  private letter: LetterMenu | null = null;
+  private mailIndicator: Phaser.GameObjects.Image[] = [];
   private shipping: ShippingMenu | null = null;
   private chestMenu: ChestMenu | null = null;
   private menuFarmer: FarmerSprite | null = null;
@@ -390,7 +396,7 @@ export class World extends Phaser.Scene {
     textures.add(SPRITE_TEXT_TEXTURE);
     textures.add(EMOTE_TEXTURE);
     if (mineLevelOf(this.params.start.location) !== null) for (const m of ["Green Slime", "Bug", "Rock Crab", "Duggy", "Grub", "Fly", "Bat", "Stone Golem"]) textures.add(`Characters/Monsters/${m}`);
-    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont", "LooseSprites/Cursors2", "TileSheets/BuffsIcons", "TileSheets/Craftables", "TileSheets/Objects_2", "Maps/springobjects", "TileSheets/tools", "TileSheets/weapons"]) textures.add(t);
+    for (const t of ["LooseSprites/daybg", "LooseSprites/nightbg", "LooseSprites/Cursors_1_6", "Maps/MenuTiles", "Fonts/SmallFont", "LooseSprites/Cursors2", "TileSheets/BuffsIcons", "TileSheets/Craftables", "TileSheets/Objects_2", "Maps/springobjects", "TileSheets/tools", "TileSheets/weapons", "LooseSprites/letterBG"]) textures.add(t);
     for (const t of textures) {
       if (!this.textures.exists(t) && (t in manifest.textures || manifest.fonts.includes(t))) this.load.image(t, contentUrl(t, "png"));
     }
@@ -683,6 +689,116 @@ export class World extends Phaser.Scene {
       return true;
     });
     for (let i = used; i < this.floaterPool.length; i++) this.floaterPool[i].setVisible(false);
+  }
+
+  private mailState(): MailState {
+    const state = this.params.state;
+    state.mailbox ??= [];
+    state.mailForTomorrow ??= [];
+    state.mailReceived ??= [];
+    return state as unknown as MailState;
+  }
+
+  private gsqPlayer() {
+    const state = this.params.state;
+    const m = this.mailState();
+    return {
+      mailReceived: m.mailReceived,
+      mailbox: m.mailbox,
+      mailForTomorrow: m.mailForTomorrow,
+      eventsSeen: state.eventsSeen ?? [],
+      friendship: state.friendship,
+      male: this.appearance.isMale,
+      totalEarned: state.totalEarned,
+      conversationTopics: state.conversationTopics ?? [],
+      weather: state.weather,
+    };
+  }
+
+  private runMailTriggers(trigger: string) {
+    const state = this.params.state;
+    const gsq = this.gsqState();
+    state.triggerActionsApplied ??= [];
+    runTriggers(trigger, (this.params.triggerActions ?? []) as TriggerAction[], { state: gsq, random: daySaveRandom(gsq), player: this.gsqPlayer() }, {
+      mail: this.mailState(),
+      applied: state.triggerActionsApplied,
+      markEventSeen: (id) => {
+        state.eventsSeen ??= [];
+        if (!state.eventsSeen.includes(id)) state.eventsSeen.push(id);
+      },
+    });
+  }
+
+  private mailboxTile() {
+    if (this.location.name !== "Farm") return null;
+    const house = this.entities.find((e): e is BuildingEntity => e.kind === "building" && e.type === "Farmhouse");
+    const data = house ? this.params.buildings[house.type] : null;
+    const tile = (data as { ActionTiles?: { Tile: { x: number; y: number }; Action: string }[] } | null)?.ActionTiles?.find((a) => a.Action === "Mailbox")?.Tile;
+    return house && tile ? { x: house.x + tile.x, y: house.y + tile.y } : null;
+  }
+
+  private tryMailbox(tx: number, ty: number) {
+    const box = this.mailboxTile();
+    if (!box || box.x !== tx || box.y !== ty) return false;
+    const m = this.mailState();
+    if (!m.mailbox.length || !this.letter) return true;
+    const id = m.mailbox.shift()!;
+    if (!id.includes("passedOut") && !id.includes("Cooking") && !m.mailReceived.includes(id)) m.mailReceived.push(id);
+    this.openLetter(id);
+    return true;
+  }
+
+  private openLetter(id: string) {
+    const state = this.params.state;
+    const raw = this.params.mail?.[id] ?? `[${id}]`;
+    const parsed = parseLetter(raw, id, {
+      playerName: state.farmerName,
+      male: this.appearance.isMale,
+      random: Math.random,
+      cookingRecipes: this.params.recipes.cooking,
+      craftingRecipes: this.params.recipes.crafting,
+      knownCooking: state.cookingRecipes,
+    });
+    if (parsed.money > 0) earn(state, parsed.money);
+    if (parsed.recipe) {
+      const list = parsed.recipe.kind === "cooking" ? state.cookingRecipes : state.craftingRecipes;
+      if (!list.includes(parsed.recipe.name)) list.push(parsed.recipe.name);
+    }
+    if (parsed.quest) {
+      state.quests ??= [];
+      if (!state.quests.includes(parsed.quest)) state.quests.push(parsed.quest);
+    }
+    this.letter?.show(paginateLetter(parsed));
+    this.params.store.save(state);
+  }
+
+  private letterClick(px: number, py: number) {
+    const l = this.letter;
+    if (!l) return;
+    const hit = l.click(this.cameras.main.width, this.cameras.main.height, px, py);
+    if (hit?.kind === "close") l.close();
+    else if (hit?.kind === "grab") {
+      const state = this.params.state;
+      if (addItem(state.inventory, { id: hit.item.id, stack: hit.item.count })) this.dropItems(Array(hit.item.count).fill(hit.item.id), centerTile(this.body).x, centerTile(this.body).y);
+      this.params.store.save(state);
+    }
+  }
+
+  private drawMailIndicator(time: number) {
+    const box = this.mailState().mailbox.length > 0 ? this.mailboxTile() : null;
+    if (!box || !this.textures.exists(CURSORS_TEXTURE)) {
+      for (const img of this.mailIndicator) img.setVisible(false);
+      return;
+    }
+    const tex = this.textures.get(CURSORS_TEXTURE);
+    for (const f of ["141,465,20,24", "189,423,15,13"]) if (!tex.has(f)) tex.add(f, 0, ...(f.split(",").map(Number) as [number, number, number, number]));
+    if (!this.mailIndicator.length) {
+      this.mailIndicator = [this.add.image(0, 0, CURSORS_TEXTURE, "141,465,20,24").setOrigin(0, 0).setScale(4).setAlpha(0.75), this.add.image(0, 0, CURSORS_TEXTURE, "189,423,15,13").setOrigin(7 / 15, 6 / 13).setScale(4)];
+    }
+    const bob = 4 * Math.round(Math.sin(time / 250) * 100) / 100;
+    const layer = ((box.x + 1) * 64) / 10000 + (box.y * 64) / 10000;
+    this.mailIndicator[0].setPosition(box.x * 64, box.y * 64 - 96 - 48 + bob).setDepth(this.rendered.spriteDepth(layer + 1e-6)).setVisible(true);
+    this.mailIndicator[1].setPosition(box.x * 64 + 32 + 4, box.y * 64 - 64 - 24 - 8 + bob).setDepth(this.rendered.spriteDepth(layer + 1e-5)).setVisible(true);
   }
 
   private findElevator() {
@@ -1527,6 +1643,8 @@ export class World extends Phaser.Scene {
     this.shipping = new ShippingMenu(this, HUD_DEPTH + 55);
     this.chestMenu = new ChestMenu(this, HUD_DEPTH + 35);
     this.elevator = new ElevatorMenu(this, HUD_DEPTH + 40);
+    this.letter = new LetterMenu(this, HUD_DEPTH + 45);
+    this.mailIndicator = [];
     this.levelUp = new LevelUpMenu(this, HUD_DEPTH + 60, fontData, this.cache.json.get(SMALL_FONT_DATA) as SpriteFontData | undefined);
     this.menuFarmer = new FarmerSprite(this, this.appearance, this.params.clothing, this.featureXOffset, this.featureYOffset, true);
 
@@ -1546,7 +1664,8 @@ export class World extends Phaser.Scene {
     kb.on("keydown-ENTER", () => (this.dialogueBox?.open ? this.dialogueBox.advance() : this.question?.confirm()));
     kb.on("keydown-SPACE", () => this.question?.confirm());
     kb.on("keydown-ESC", () => {
-      if (this.elevator?.open) this.elevator.open = false;
+      if (this.letter?.open) this.letter.close();
+      else if (this.elevator?.open) this.elevator.open = false;
       else if (this.event?.skippable && !this.question?.open) {
         if (this.dialogueBox) {
           this.dialogueBox.onClose = null;
@@ -1565,6 +1684,10 @@ export class World extends Phaser.Scene {
     for (const k of ["DOWN", "S"]) kb.on(`keydown-${k}`, () => this.question?.move(1));
     this.input.mouse?.disableContextMenu();
     this.input.on("pointerdown", (p: Phaser.Input.Pointer) => {
+      if (this.letter?.open) {
+        this.letterClick(p.x, p.y);
+        return;
+      }
       if (this.elevator?.open) {
         this.elevatorClick(p.x, p.y);
         return;
@@ -1696,6 +1819,10 @@ export class World extends Phaser.Scene {
         state.mailReceived ??= [];
         if (!state.mailReceived.includes(mail)) state.mailReceived.push(mail);
       },
+      removeMail: (mail) => {
+        state.mailReceived = (state.mailReceived ?? []).filter((m) => m !== mail);
+      },
+      mailForTomorrow: (mail) => addMailForTomorrow(this.mailState(), mail),
       giveItem: (item, count) => {
         const full = item.startsWith("(") ? item : `(O)${item}`;
         if (addItem(state.inventory, { id: full, stack: count })) this.dropItems([full], centerTile(this.body).x, centerTile(this.body).y);
@@ -2665,6 +2792,7 @@ export class World extends Phaser.Scene {
     }
     const t = facingTile(this.body);
     const npc = this.npcAt(t.x, t.y);
+    if (this.tryMailbox(t.x, t.y)) return;
     if (this.tryMineTile(t.x, t.y)) return;
     if (this.tryPickUpSpawned(t.x, t.y)) return;
     if (this.tryOpenChest(t.x, t.y)) return;
@@ -2700,7 +2828,7 @@ export class World extends Phaser.Scene {
   }
 
   private get timePasses() {
-    return !this.event && !this.fishing?.bar && !this.elevator?.open && !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.endingDay && !this.warping;
+    return !this.event && !this.letter?.open && !this.fishing?.bar && !this.elevator?.open && !this.question?.open && !this.dialogueBox?.open && !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.endingDay && !this.warping;
   }
 
   private get canMove() {
@@ -2745,7 +2873,15 @@ export class World extends Phaser.Scene {
       }
       state.shipping = [];
       this.pendingShipping = shipped.length ? { items: shipped, date: yesterday } : null;
+      this.runMailTriggers("DayEnding");
       Object.assign(state, nextDay(state));
+      const mail = this.mailState();
+      receiveMailForTomorrow(mail);
+      const friendLetter = friendGiftLetter(state.friendship, this.params.mail ?? {}, Math.random, null);
+      if (friendLetter) mail.mailbox.push(friendLetter);
+      const seasonal = seasonalLetter(state.season, state.dayOfMonth, state.year, this.params.mail ?? {});
+      if (seasonal) mail.mailbox.push(seasonal);
+      this.runMailTriggers("DayStarted");
       const gsq = this.gsqState();
       const random = daySaveRandom(gsq);
       const weather = updateWeatherForNewDay(gsq, state.weatherForTomorrow, this.params.weather, { state: gsq, random });
@@ -2883,7 +3019,7 @@ export class World extends Phaser.Scene {
     this.weatherFx?.draw(flags, this.outdoors, this.cameras.main, time);
     this.lightSources = this.lightSources.filter((l) => stepLightFade(l, { turnOff, raining: flags.raining }));
     this.overlay?.draw(lighting(clock.time, clock.interval, ctx), this.lightSources, this.cameras.main, this.outdoors && flags.raining);
-    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.dialogueBox?.open && !this.question?.open && !this.fishing?.bar && !this.elevator?.open && !this.event);
+    this.toolbar?.draw(this.toolbarLayout(), state.inventory, state.currentToolIndex, this.params.items, !this.shop?.open && !this.gameMenu?.open && !this.chestMenu?.open && !this.dialogueBox?.open && !this.question?.open && !this.fishing?.bar && !this.elevator?.open && !this.event && !this.letter?.open);
     this.dialogueBox?.update(this.game.loop.rawDelta);
     this.shipping?.update(Math.min(250, this.game.loop.rawDelta));
     const pointer = this.input.activePointer;
@@ -2892,6 +3028,8 @@ export class World extends Phaser.Scene {
     this.drawGameMenu(pointer);
     this.drawChest(pointer);
     this.shipping?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items);
+    this.letter?.update(this.game.loop.rawDelta);
+    this.letter?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items, this.params.strings["Strings\\UI"] ?? {}, time, { x: pointer.x, y: pointer.y });
     this.elevator?.draw(state.deepestMineLevel ?? 0, this.mine?.level ?? 0, this.cameras.main.width, this.cameras.main.height, { x: pointer.x, y: pointer.y });
     this.levelUp?.draw(this.cameras.main.width, this.cameras.main.height, this.params.items, this.params.strings["Strings\\UI"] ?? {}, { x: pointer.x, y: pointer.y });
     this.dialogueBox?.draw(this.cameras.main.width, this.cameras.main.height, speaker && this.textures.exists(speaker) ? speaker : null);
@@ -2976,6 +3114,7 @@ export class World extends Phaser.Scene {
     this.drawDrops();
     this.drawNpcs();
     this.drawEvent();
+    this.drawMailIndicator(time);
     this.drawMonsters(time);
     this.drawFloaters(delta);
     this.drawTemps(delta);

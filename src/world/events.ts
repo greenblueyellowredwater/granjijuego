@@ -320,6 +320,8 @@ export interface EventHost {
   loadScript(key: string): string | null;
   hasMail(id: string): boolean;
   addMail(id: string): void;
+  removeMail(id: string): void;
+  mailForTomorrow(id: string): void;
   giveItem(id: string, count: number): void;
   removeItem(id: string, count: number): void;
   addQuest(id: string): void;
@@ -864,9 +866,13 @@ export class EventRunner {
         this.current++;
         return;
       case "mail":
+        h.mailForTomorrow(args[1]);
+        this.current++;
+        return;
       case "addmailreceived":
       case "mailreceived":
-        h.addMail(args[1]);
+        if (args[2] === "false") h.removeMail(args[1]);
+        else h.addMail(args[1]);
         this.current++;
         return;
       case "friendship":

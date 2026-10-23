@@ -36,6 +36,10 @@ export interface GameState {
   deepestMineLevel?: number;
   eventsSeen?: string[];
   mailReceived?: string[];
+  mailbox?: string[];
+  mailForTomorrow?: string[];
+  triggerActionsApplied?: string[];
+  conversationTopics?: string[];
   quests?: string[];
   timesReachedMineBottom?: number;
   craftingRecipes: string[];

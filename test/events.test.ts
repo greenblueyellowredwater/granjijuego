@@ -44,6 +44,8 @@ function host(log: string[] = []): EventHost {
     loadScript: (k) => (k === "branch" ? 'message "branch"/end' : null),
     hasMail: () => false,
     addMail: (m) => log.push(`mail ${m}`),
+    removeMail: () => {},
+    mailForTomorrow: (m) => log.push(`tomorrow ${m}`),
     giveItem: (id, n) => log.push(`item ${id} ${n}`),
     removeItem: () => {},
     addQuest: (q) => log.push(`quest ${q}`),
@@ -114,7 +116,7 @@ describe("eventos: ejecución", () => {
 
   it("las pausas avanzan por tiempo y las preguntas rápidas insertan su rama", () => {
     const log: string[] = [];
-    const r = new EventRunner("9", 'none/1 1/farmer 1 1 0/pause 500/quickQuestion ¿Sí?#Uno#Dos(break)message "uno"(break)message "dos"\\mail ok/end warpOut', host(log), { x: 0, y: 0, facing: 0 });
+    const r = new EventRunner("9", 'none/1 1/farmer 1 1 0/pause 500/quickQuestion ¿Sí?#Uno#Dos(break)message "uno"(break)message "dos"\\addMailReceived ok/end warpOut', host(log), { x: 0, y: 0, facing: 0 });
     for (let t = 0; t < 400; t += 16) r.update(16);
     expect(log).toEqual([]);
     run(r);

@@ -84,3 +84,33 @@ export function layoutSpriteText(text: string, width: number, characters = text.
   }
   return { glyphs, height: y + LINE };
 }
+
+export function indexBeyondHeight(text: string, width: number, height: number) {
+  let x = 0, y = 0;
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === "^") {
+      y += 18 * SPRITE_TEXT_ZOOM;
+      x = 0;
+      continue;
+    }
+    if (i > 0) x += 8 * SPRITE_TEXT_ZOOM + (widthOffset(text[i]) + widthOffset(text[i - 1])) * SPRITE_TEXT_ZOOM;
+    if (nextSpacePosition(text, i, x) >= width) {
+      y += 18 * SPRITE_TEXT_ZOOM;
+      x = 0;
+    }
+    if (y >= height - 16 * SPRITE_TEXT_ZOOM) return i - 1;
+  }
+  return text.length - 1;
+}
+
+export function spriteTextPages(text: string, width: number, height: number) {
+  const pages: string[] = [];
+  let rest = text;
+  while (rest.length > 0) {
+    const page = rest.slice(0, indexBeyondHeight(rest, width, height) + 1);
+    if (page.length <= 0) break;
+    pages.push(page);
+    rest = rest.slice(page.length);
+  }
+  return pages;
+}

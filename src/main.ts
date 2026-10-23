@@ -166,6 +166,8 @@ async function boot() {
   terrain.bigCraftables = bigCraftables;
   const fish = (await load("Data/Fish").catch(() => ({}))) as Record<string, string>;
   const monsters = (await load("Data/Monsters").catch(() => ({}))) as Record<string, string>;
+  const mail = (await load("Data/mail").catch(() => ({}))) as Record<string, string>;
+  const triggerActions = (await load("Data/TriggerActions").catch(() => [])) as unknown[];
   const machines = (await load("Data/Machines").catch(() => ({}))) as Record<string, MachineData>;
   const craftingRecipes = (await load("Data/CraftingRecipes").catch(() => ({}))) as Record<string, string>;
   const cookingRecipes = (await load("Data/CookingRecipes").catch(() => ({}))) as Record<string, string>;
@@ -188,7 +190,7 @@ async function boot() {
     npcs.setupDay(
       Object.fromEntries(npcNames.map((n) => [n, characters[n]])),
       schedules,
-      { season: state.season, dayOfMonth: state.dayOfMonth, year: state.year, raining: state.weather === "Rain" || state.weather === "Storm", mail: new Set(state.flags) },
+      { season: state.season, dayOfMonth: state.dayOfMonth, year: state.year, raining: state.weather === "Rain" || state.weather === "Storm", mail: new Set([...state.flags, ...(state.mailReceived ?? [])]) },
       () => true,
     );
   setupNpcs();
@@ -222,6 +224,8 @@ async function boot() {
     machines,
     fish,
     monsters,
+    mail,
+    triggerActions,
     items: {
       tools,
       weapons,

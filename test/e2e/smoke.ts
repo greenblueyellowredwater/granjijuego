@@ -494,6 +494,26 @@ const checks: [string, (page: Page) => Promise<void>][] = [
       if (!((await world(`w.params.state.eventsSeen.includes("100162")`)) as boolean)) throw new Error("Evento no marcado");
     },
   ],
+  [
+    "lee una carta del buzón y toma el regalo",
+    async (page) => {
+      const world = (expr: string) => page.evaluate(`(() => { const w = window.__game.scene.getScene("World"); return ${expr}; })()`);
+      await page.goto(`${BASE}/?map=Farm&x=68&y=17`);
+      await waitStatus(page, /Farm .* tile 68,17/);
+      await world(`(w.params.state.mailbox = ["Robin"], w.params.state.inventory[8] = null, w.body.facing = 0, true)`);
+      await page.keyboard.press("x");
+      await new Promise((r) => setTimeout(r, 800));
+      if (!(await world(`w.letter.open`))) throw new Error("No se abrió la carta");
+      await page.screenshot({ path: `${OUT}/letter.png` });
+      const size = (await world(`({ w: w.cameras.main.width, h: w.cameras.main.height })`)) as { w: number; h: number };
+      const ly = Math.trunc((size.h - 720) / 2);
+      await page.mouse.click(Math.trunc(size.w / 2), ly + 720 - 32 - 48);
+      await new Promise((r) => setTimeout(r, 300));
+      const inv = (await world(`JSON.stringify(w.params.state.inventory)`)) as string;
+      if (!inv.includes('"(O)388","stack":50')) throw new Error(`Sin la madera: ${inv}`);
+      if (!((await world(`w.params.state.mailReceived.includes("Robin")`)) as boolean)) throw new Error("Carta no marcada");
+    },
+  ],
 ];
 
 if (!CHROME) throw new Error("No encontré Chrome; definí CHROME_PATH");
